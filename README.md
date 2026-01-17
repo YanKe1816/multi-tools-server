@@ -12,6 +12,7 @@ under `/tools/*`.
 - `text_normalize` is the first formal capability
 - `schema_validate` validates data against a limited JSON Schema subset
 - `schema_map` maps objects deterministically using explicit paths
+- `input_gate` performs pre-flight input checks with fixed rules
 
 ### Example requests
 ```bash
@@ -248,5 +249,107 @@ Response:
       "message": "Rename source path is missing."
     }
   ]
+}
+```
+
+### Examples (input_gate)
+
+1) Valid input (pass=true)
+
+Request:
+```json
+{
+  "input": { "name": "Ada" },
+  "rules": {
+    "max_size": 200,
+    "allow_types": ["object"],
+    "string": { "min_length": 0, "max_length": 10 },
+    "object": { "max_depth": 2, "max_keys": 5 },
+    "array": { "max_length": 3 }
+  },
+  "mode": "strict"
+}
+```
+
+Response:
+```json
+{ "pass": true }
+```
+
+2) String too long
+
+Request:
+```json
+{
+  "input": "toolong",
+  "rules": {
+    "max_size": 200,
+    "allow_types": ["string"],
+    "string": { "min_length": 0, "max_length": 3 },
+    "object": { "max_depth": 1, "max_keys": 1 },
+    "array": { "max_length": 1 }
+  },
+  "mode": "strict"
+}
+```
+
+Response:
+```json
+{
+  "pass": false,
+  "errors": [
+    { "code": "STRING_TOO_LONG", "path": "$", "message": "String length exceeds max_length." }
+  ]
+}
+```
+
+3) Object too deep
+
+Request:
+```json
+{
+  "input": { "a": { "b": { "c": 1 } } },
+  "rules": {
+    "max_size": 200,
+    "allow_types": ["object"],
+    "string": { "min_length": 0, "max_length": 10 },
+    "object": { "max_depth": 2, "max_keys": 10 },
+    "array": { "max_length": 10 }
+  },
+  "mode": "strict"
+}
+```
+
+Response:
+```json
+{
+  "pass": false,
+  "errors": [
+    { "code": "OBJECT_TOO_DEEP", "path": "$", "message": "Object depth exceeds max_depth." }
+  ]
+}
+```
+
+4) Invalid rules
+
+Request:
+```json
+{
+  "input": "ok",
+  "rules": {
+    "max_size": "large",
+    "allow_types": ["string"],
+    "string": { "min_length": 0, "max_length": 10 },
+    "object": { "max_depth": 2, "max_keys": 10 },
+    "array": { "max_length": 10 }
+  },
+  "mode": "strict"
+}
+```
+
+Response:
+```json
+{
+  "error": { "code": "RULES_INVALID", "message": "Rules are invalid." }
 }
 ```
