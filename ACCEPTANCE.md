@@ -1,13 +1,17 @@
 # Capability Acceptance Criteria
 
-每一个能力在合并到 main 前，必须满足以下条件：
+Every capability must meet the criteria below before it can be merged into `main`
+and listed as accepted. This acceptance process applies to Task #2 (the first formal
+capability) and all future capabilities.
 
-1. 对应路径可被访问（GET 或 POST 正常响应）
-2. 给定固定输入示例，输出结果稳定、可重复
-3. 输出结构固定（字段名与类型不随意变化）
-4. 非法或错误输入不会导致服务崩溃
-5. 能力描述与实际行为一致，不夸大、不误导
+1. The route is reachable and responds successfully (GET or POST as defined).
+2. Given a fixed input example, the output is deterministic and repeatable.
+3. The input and output contracts are stable (field names and types do not drift).
+4. Invalid or malformed input does not crash the service.
+5. The documented behavior matches actual behavior without implicit judgment or
+   hidden business logic.
+6. The capability has no hidden side effects (no state mutations, no external calls).
 
-说明：
-- 当前阶段为人工验收
-- 未来如有需要再考虑自动化验收
+Notes:
+- Acceptance is currently manual.
+- Automated acceptance may be considered later if needed.
