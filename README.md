@@ -11,6 +11,7 @@ under `/tools/*`.
 - `verify_test` is a stability check tool
 - `text_normalize` is the first formal capability
 - `schema_validate` validates data against a limited JSON Schema subset
+- `schema_map` maps objects deterministically using explicit paths
 
 ### Example requests
 ```bash
@@ -149,5 +150,103 @@ Response:
     "code": "SCHEMA_UNSUPPORTED",
     "message": "Unsupported schema keyword: $ref."
   }
+}
+```
+
+### Examples (schema_map)
+
+1) Rename + defaults (ok=true)
+
+Request:
+```json
+{
+  "data": { "user": { "name": "Ada" } },
+  "mapping": {
+    "rename": { "user.name": "profile.display_name" },
+    "defaults": { "profile.active": true },
+    "drop": [],
+    "require": ["profile.display_name"]
+  },
+  "mode": "strict"
+}
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "data": {
+    "user": {},
+    "profile": {
+      "display_name": "Ada",
+      "active": true
+    }
+  },
+  "meta": {
+    "applied": [
+      "rename:user.name->profile.display_name",
+      "defaults:profile.active"
+    ]
+  }
+}
+```
+
+2) Require missing (ok=false)
+
+Request:
+```json
+{
+  "data": { "user": {} },
+  "mapping": {
+    "rename": {},
+    "defaults": {},
+    "drop": [],
+    "require": ["user.name"]
+  },
+  "mode": "strict"
+}
+```
+
+Response:
+```json
+{
+  "ok": false,
+  "errors": [
+    {
+      "path": "user.name",
+      "code": "REQUIRED_MISSING",
+      "message": "Required path is missing."
+    }
+  ]
+}
+```
+
+3) Strict rename source missing (ok=false)
+
+Request:
+```json
+{
+  "data": { "user": {} },
+  "mapping": {
+    "rename": { "user.name": "profile.display_name" },
+    "defaults": {},
+    "drop": [],
+    "require": []
+  },
+  "mode": "strict"
+}
+```
+
+Response:
+```json
+{
+  "ok": false,
+  "errors": [
+    {
+      "path": "user.name",
+      "code": "SOURCE_PATH_MISSING",
+      "message": "Rename source path is missing."
+    }
+  ]
 }
 ```
