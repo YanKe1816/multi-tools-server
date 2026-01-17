@@ -10,6 +10,7 @@ under `/tools/*`.
 - `/mcp` returns the current `/tools/*` list with `name`, `path`, and `description`
 - `verify_test` is a stability check tool
 - `text_normalize` is the first formal capability
+- `schema_validate` validates data against a limited JSON Schema subset
 
 ### Example requests
 ```bash
@@ -75,6 +76,78 @@ Response:
   "error": {
     "code": "TEXT_EMPTY",
     "message": "Text is empty."
+  }
+}
+```
+
+### Examples (schema_validate)
+
+1) Valid data
+
+Request:
+```json
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "minLength": 1 }
+    },
+    "required": ["name"]
+  },
+  "data": { "name": "Ada" }
+}
+```
+
+Response:
+```json
+{
+  "valid": true,
+  "errors": []
+}
+```
+
+2) Missing required field
+
+Request:
+```json
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "minLength": 1 }
+    },
+    "required": ["name"]
+  },
+  "data": {}
+}
+```
+
+Response:
+```json
+{
+  "valid": false,
+  "errors": ["$.name: required"]
+}
+```
+
+3) Unsupported schema keyword ($ref)
+
+Request:
+```json
+{
+  "schema": {
+    "$ref": "#/definitions/name"
+  },
+  "data": { "name": "Ada" }
+}
+```
+
+Response:
+```json
+{
+  "error": {
+    "code": "SCHEMA_UNSUPPORTED",
+    "message": "Unsupported schema keyword: $ref."
   }
 }
 ```

@@ -3,6 +3,7 @@
 | Name | Path | Description | Status |
 |------|------|-------------|--------|
 | text_normalize | /tools/text_normalize | Deterministic normalization for newlines, whitespace, blank lines, and tabs. | active |
+| schema_validate | /tools/schema_validate | Validate data against a limited JSON Schema subset; returns valid/errors or error. | active |
 
 Notes:
 - This table is the single source of truth for capabilities merged into `main`.
