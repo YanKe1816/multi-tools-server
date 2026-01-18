@@ -6,6 +6,7 @@ from tools.schema_validate import router as schema_validate_router
 from tools.schema_map import router as schema_map_router
 from tools.input_gate import router as input_gate_router
 from tools.structured_error import router as structured_error_router
+from tools.capability_contract import router as capability_contract_router
 
 app = FastAPI(title="Multi-Tools Server")
 
@@ -41,6 +42,11 @@ TOOLS = [
         "path": "/tools/structured_error",
         "description": "Normalize error inputs into a structured error envelope.",
     },
+    {
+        "name": "capability_contract",
+        "path": "/tools/capability_contract",
+        "description": "Validate or normalize a machine-readable capability contract.",
+    },
 ]
 
 # Tool routers
@@ -50,6 +56,7 @@ app.include_router(schema_validate_router)
 app.include_router(schema_map_router)
 app.include_router(input_gate_router)
 app.include_router(structured_error_router)
+app.include_router(capability_contract_router)
 
 
 @app.get("/")

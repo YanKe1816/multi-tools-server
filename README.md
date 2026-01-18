@@ -14,6 +14,7 @@ under `/tools/*`.
 - `schema_map` maps objects deterministically using explicit paths
 - `input_gate` performs pre-flight input checks with fixed rules
 - `structured_error` normalizes error inputs into a structured error envelope
+- `capability_contract` validates or normalizes capability contracts for governance
 
 ### Example requests
 ```bash
@@ -458,6 +459,93 @@ Response:
     "where": { "tool": "schema_validate", "stage": "validate", "path": "" },
     "http_status": 503,
     "fingerprint": "496ba049e95816ba"
+  }
+}
+```
+
+### Examples (capability_contract)
+
+1) Valid contract (ok=true)
+
+Request:
+```json
+{
+  "capability": { "name": "schema_map", "path": "/tools/schema_map", "version": "0.1.0" },
+  "contract": {
+    "inputs": { "schema": { "type": "object" } },
+    "outputs": { "schema": { "type": "object" } },
+    "forbidden": { "network": true, "storage": true, "side_effects": true, "judgement": true },
+    "behavior": { "deterministic": true, "idempotent": true }
+  },
+  "mode": "validate"
+}
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "contract": {
+    "inputs": { "schema": { "type": "object" } },
+    "outputs": { "schema": { "type": "object" } },
+    "forbidden": { "network": true, "storage": true, "side_effects": true, "judgement": true },
+    "behavior": { "deterministic": true, "idempotent": true }
+  }
+}
+```
+
+2) Forbidden violation (ok=false)
+
+Request:
+```json
+{
+  "capability": { "name": "schema_map", "path": "/tools/schema_map", "version": "0.1.0" },
+  "contract": {
+    "inputs": { "schema": { "type": "object" } },
+    "outputs": { "schema": { "type": "object" } },
+    "forbidden": { "network": true, "storage": true, "side_effects": true, "judgement": false },
+    "behavior": { "deterministic": true, "idempotent": true }
+  },
+  "mode": "validate"
+}
+```
+
+Response:
+```json
+{
+  "ok": false,
+  "errors": [
+    {
+      "path": "contract.forbidden.judgement",
+      "code": "FORBIDDEN_VIOLATION",
+      "message": "Forbidden flag must be true."
+    }
+  ]
+}
+```
+
+3) Invalid inputs schema (error)
+
+Request:
+```json
+{
+  "capability": { "name": "schema_map", "path": "/tools/schema_map", "version": "0.1.0" },
+  "contract": {
+    "inputs": { "schema": "not-an-object" },
+    "outputs": { "schema": { "type": "object" } },
+    "forbidden": { "network": true, "storage": true, "side_effects": true, "judgement": true },
+    "behavior": { "deterministic": true, "idempotent": true }
+  },
+  "mode": "validate"
+}
+```
+
+Response:
+```json
+{
+  "error": {
+    "code": "SCHEMA_INVALID",
+    "message": "contract.inputs.schema must be an object."
   }
 }
 ```
