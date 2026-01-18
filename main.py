@@ -5,6 +5,7 @@ from tools.text_normalize import router as text_normalize_router
 from tools.schema_validate import router as schema_validate_router
 from tools.schema_map import router as schema_map_router
 from tools.input_gate import router as input_gate_router
+from tools.structured_error import router as structured_error_router
 
 app = FastAPI(title="Multi-Tools Server")
 
@@ -35,6 +36,11 @@ TOOLS = [
         "path": "/tools/input_gate",
         "description": "Pre-flight input checks for type, size, and structure constraints.",
     },
+    {
+        "name": "structured_error",
+        "path": "/tools/structured_error",
+        "description": "Normalize error inputs into a structured error envelope.",
+    },
 ]
 
 # Tool routers
@@ -43,6 +49,7 @@ app.include_router(text_normalize_router)
 app.include_router(schema_validate_router)
 app.include_router(schema_map_router)
 app.include_router(input_gate_router)
+app.include_router(structured_error_router)
 
 
 @app.get("/")

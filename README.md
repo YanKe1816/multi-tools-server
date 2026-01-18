@@ -13,6 +13,7 @@ under `/tools/*`.
 - `schema_validate` validates data against a limited JSON Schema subset
 - `schema_map` maps objects deterministically using explicit paths
 - `input_gate` performs pre-flight input checks with fixed rules
+- `structured_error` normalizes error inputs into a structured error envelope
 
 ### Example requests
 ```bash
@@ -351,5 +352,112 @@ Response:
 ```json
 {
   "error": { "code": "RULES_INVALID", "message": "Rules are invalid." }
+}
+```
+
+### Examples (structured_error)
+
+1) RULES_INVALID
+
+Request:
+```json
+{
+  "source": { "tool": "schema_map", "stage": "rename", "version": "0.1.0" },
+  "error": {
+    "code": "RULES_INVALID",
+    "message": "Rules are invalid.",
+    "type": "ValueError",
+    "http_status": 400,
+    "path": "mapping.rename",
+    "details": {}
+  },
+  "policy": { "max_message_length": 300, "include_raw_message": true }
+}
+```
+
+Response:
+```json
+{
+  "ok": false,
+  "error": {
+    "class": "RULES_INVALID",
+    "code": "RULES_INVALID",
+    "message": "Rules are invalid.",
+    "retryable": false,
+    "severity": "low",
+    "where": { "tool": "schema_map", "stage": "rename", "path": "mapping.rename" },
+    "http_status": 400,
+    "fingerprint": "8dab2ff1ac8f5b45"
+  }
+}
+```
+
+2) http_status=429 -> RATE_LIMIT
+
+Request:
+```json
+{
+  "source": { "tool": "input_gate", "stage": "size", "version": "0.1.0" },
+  "error": {
+    "code": "RATE_LIMIT",
+    "message": "Too many requests.",
+    "type": "HTTPError",
+    "http_status": 429,
+    "path": "",
+    "details": {}
+  },
+  "policy": { "max_message_length": 300, "include_raw_message": true }
+}
+```
+
+Response:
+```json
+{
+  "ok": false,
+  "error": {
+    "class": "RATE_LIMIT",
+    "code": "RATE_LIMIT",
+    "message": "Too many requests.",
+    "retryable": true,
+    "severity": "medium",
+    "where": { "tool": "input_gate", "stage": "size", "path": "" },
+    "http_status": 429,
+    "fingerprint": "9bdd6c78b259973c"
+  }
+}
+```
+
+3) http_status=503 -> UPSTREAM
+
+Request:
+```json
+{
+  "source": { "tool": "schema_validate", "stage": "validate", "version": "0.1.0" },
+  "error": {
+    "code": "UPSTREAM_TIMEOUT",
+    "message": "Upstream timed out.",
+    "type": "TimeoutError",
+    "http_status": 503,
+    "path": "",
+    "details": {}
+  },
+  "policy": { "max_message_length": 300, "include_raw_message": true }
+}
+```
+
+Response:
+```json
+{
+  "ok": false,
+  "error": {
+    "class": "UPSTREAM",
+    "code": "UPSTREAM_TIMEOUT",
+    "message": "Upstream timed out.",
+    "retryable": true,
+    "severity": "medium",
+    "where": { "tool": "schema_validate", "stage": "validate", "path": "" },
+    "http_status": 503,
+    "fingerprint": "496ba049e95816ba"
+  }
 }
 ```
