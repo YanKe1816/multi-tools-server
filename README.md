@@ -16,6 +16,7 @@ under `/tools/*`.
 - `structured_error` normalizes error inputs into a structured error envelope
 - `capability_contract` validates or normalizes capability contracts for governance
 - `rule_trace` normalizes execution traces for governance and audit
+- `schema_diff` diffs two JSON Schemas into added/removed/changed paths
 
 ### Example requests
 ```bash
