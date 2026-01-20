@@ -10,6 +10,7 @@
 | capability_contract | /tools/capability_contract | Validate/normalize a capability contract; returns ok true with contract or ok false with errors. | active |
 | rule_trace | /tools/rule_trace | Normalize run/input/output summaries and rule hits into a trace envelope; returns ok true with trace. | active |
 | schema_diff | /tools/schema_diff | Deterministically diff two JSON Schemas and return added/removed/changed paths. | active |
+| enum_registry | /tools/enum_registry | Deterministically normalize and validate enum sets; returns matched/missing/duplicates. | active |
 
 Notes:
 - This table is the single source of truth for capabilities merged into `main`.
