@@ -15,6 +15,7 @@ under `/tools/*`.
 - `input_gate` performs pre-flight input checks with fixed rules
 - `structured_error` normalizes error inputs into a structured error envelope
 - `capability_contract` validates or normalizes capability contracts for governance
+- `rule_trace` normalizes execution traces for governance and audit
 
 ### Example requests
 ```bash
@@ -546,6 +547,141 @@ Response:
   "error": {
     "code": "SCHEMA_INVALID",
     "message": "contract.inputs.schema must be an object."
+  }
+}
+```
+
+### Examples (rule_trace)
+
+1) Success status
+
+Request:
+```json
+{
+  "run": {
+    "run_id": "run-001",
+    "ts": "2025-01-01T00:00:00Z",
+    "actor": "system",
+    "tool": "text_normalize",
+    "tool_version": "0.1.0",
+    "stage": "normalize"
+  },
+  "input": { "summary": { "type": "string", "size": 12, "hash": "abc" } },
+  "result": {
+    "ok": true,
+    "output_summary": { "type": "string", "size": 12, "hash": "def" },
+    "rules_hit": []
+  },
+  "policy": { "max_message_length": 200, "hash_alg": "sha256" }
+}
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "trace": {
+    "run_id": "run-001",
+    "ts": "2025-01-01T00:00:00Z",
+    "actor": "system",
+    "tool": "text_normalize",
+    "tool_version": "0.1.0",
+    "stage": "normalize",
+    "input": { "type": "string", "size": 12, "hash": "abc" },
+    "output": { "type": "string", "size": 12, "hash": "def" },
+    "rules_hit": [],
+    "status": "success"
+  }
+}
+```
+
+2) Rejected status
+
+Request:
+```json
+{
+  "run": {
+    "run_id": "run-002",
+    "ts": "2025-01-01T00:00:01Z",
+    "actor": "agent",
+    "tool": "schema_map",
+    "tool_version": "0.1.0",
+    "stage": "require"
+  },
+  "input": { "summary": { "type": "object", "size": 20, "hash": "ghi" } },
+  "result": {
+    "ok": false,
+    "output_summary": { "type": "object", "size": 0, "hash": "" },
+    "rules_hit": [
+      {
+        "rule_id": "require.user.name",
+        "kind": "reject",
+        "path": "user.name",
+        "code": "REQUIRED_MISSING",
+        "message": "Required path is missing."
+      }
+    ]
+  },
+  "policy": { "max_message_length": 200, "hash_alg": "sha256" }
+}
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "trace": {
+    "run_id": "run-002",
+    "ts": "2025-01-01T00:00:01Z",
+    "actor": "agent",
+    "tool": "schema_map",
+    "tool_version": "0.1.0",
+    "stage": "require",
+    "input": { "type": "object", "size": 20, "hash": "ghi" },
+    "output": { "type": "object", "size": 0, "hash": "" },
+    "rules_hit": [
+      {
+        "rule_id": "require.user.name",
+        "kind": "reject",
+        "path": "user.name",
+        "code": "REQUIRED_MISSING",
+        "message": "Required path is missing."
+      }
+    ],
+    "status": "rejected"
+  }
+}
+```
+
+3) Policy invalid
+
+Request:
+```json
+{
+  "run": {
+    "run_id": "run-003",
+    "ts": "2025-01-01T00:00:02Z",
+    "actor": "user",
+    "tool": "input_gate",
+    "tool_version": "0.1.0",
+    "stage": "size"
+  },
+  "input": { "summary": { "type": "string", "size": 3, "hash": "xyz" } },
+  "result": {
+    "ok": true,
+    "output_summary": { "type": "string", "size": 3, "hash": "xyz" },
+    "rules_hit": []
+  },
+  "policy": { "max_message_length": 200, "hash_alg": "md5" }
+}
+```
+
+Response:
+```json
+{
+  "error": {
+    "code": "POLICY_INVALID",
+    "message": "policy.hash_alg must be sha256."
   }
 }
 ```

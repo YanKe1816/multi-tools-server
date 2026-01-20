@@ -7,6 +7,7 @@ from tools.schema_map import router as schema_map_router
 from tools.input_gate import router as input_gate_router
 from tools.structured_error import router as structured_error_router
 from tools.capability_contract import router as capability_contract_router
+from tools.rule_trace import router as rule_trace_router
 
 app = FastAPI(title="Multi-Tools Server")
 
@@ -47,6 +48,11 @@ TOOLS = [
         "path": "/tools/capability_contract",
         "description": "Validate or normalize a machine-readable capability contract.",
     },
+    {
+        "name": "rule_trace",
+        "path": "/tools/rule_trace",
+        "description": "Normalize execution traces with input/output summaries and rule hits.",
+    },
 ]
 
 # Tool routers
@@ -57,6 +63,7 @@ app.include_router(schema_map_router)
 app.include_router(input_gate_router)
 app.include_router(structured_error_router)
 app.include_router(capability_contract_router)
+app.include_router(rule_trace_router)
 
 
 @app.get("/")

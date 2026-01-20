@@ -8,6 +8,7 @@
 | input_gate | /tools/input_gate | Pre-flight input checks for type/size/structure; returns pass or errors; error codes: TYPE_NOT_ALLOWED, JSON_TOO_LARGE, STRING_TOO_SHORT, STRING_TOO_LONG, ARRAY_TOO_LONG, OBJECT_TOO_DEEP, OBJECT_TOO_MANY_KEYS, RULES_INVALID, MODE_INVALID. | active |
 | structured_error | /tools/structured_error | Normalize error inputs into a structured error envelope; returns ok=false with class/retryable/severity/where/fingerprint. | active |
 | capability_contract | /tools/capability_contract | Validate/normalize a capability contract; returns ok true with contract or ok false with errors. | active |
+| rule_trace | /tools/rule_trace | Normalize run/input/output summaries and rule hits into a trace envelope; returns ok true with trace. | active |
 
 Notes:
 - This table is the single source of truth for capabilities merged into `main`.
@@ -19,3 +20,6 @@ Notes:
 - capability_contract contract: inputs/outputs schemas must be objects; forbidden flags must all be true; behavior.deterministic must be true. Output is ok true with contract (normalized in normalize mode) or ok false with errors; invalid inputs return error codes SCHEMA_INVALID or MODE_INVALID.
 - capability_contract rules: normalize mode fills missing forbidden/behavior defaults as true and stabilizes key order with sort_keys.
 - capability_contract acceptance examples: (1) forbidden all true + deterministic true -> ok true. (2) contract.forbidden.judgement=false -> ok false with FORBIDDEN_VIOLATION. (3) inputs.schema not object -> error SCHEMA_INVALID.
+- rule_trace contract: input includes run metadata, input summary, result (ok, output_summary, rules_hit, error), and policy (max_message_length, hash_alg). Output is ok true with trace containing run/input/output/rules_hit/status; errors return POLICY_INVALID.
+- rule_trace rules: hash_alg must be sha256; messages are truncated to max_message_length; status is error > rejected > success based on result.error and rules_hit kind=reject.
+- rule_trace acceptance examples: (1) ok true and no reject -> status success. (2) ok false with reject rule -> status rejected. (3) policy.hash_alg invalid -> error POLICY_INVALID.
