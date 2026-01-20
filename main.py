@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+
 from tools.verify_test import router as verify_router
 from tools.text_normalize import router as text_normalize_router
 from tools.schema_validate import router as schema_validate_router
@@ -12,7 +13,7 @@ from tools.enum_registry import router as enum_registry_router
 
 app = FastAPI(title="Multi-Tools Server")
 
-
+# SSOT for tool discovery (/mcp)
 TOOLS = [
     {
         "name": "verify_test",
@@ -66,6 +67,7 @@ TOOLS = [
     },
 ]
 
+# Tool routers
 app.include_router(verify_router)
 app.include_router(text_normalize_router)
 app.include_router(schema_validate_router)
