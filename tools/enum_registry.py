@@ -146,3 +146,69 @@ def enum_registry(payload: Payload):
 # curl -X POST http://localhost:8000/tools/enum_registry/ \
 #   -H "Content-Type: application/json" \
 #   -d '{"enum_set":{"name":"status","version":"1","items":[{"key":"OPEN","aliases":["o"],"meta":{}} ,{"key":"OPEN2","aliases":["o"],"meta":{}}]},"query":{"values":["o"],"mode":"strict"},"policy":{"case_fold":true,"trim":true,"max_values":100}}'
+
+
+CONTRACT = {
+    "name": "enum_registry",
+    "version": "1.0.0",
+    "path": "/tools/enum_registry",
+    "description": "Normalize and validate enum sets for matching query values.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "enum_set": {"type": "object"},
+                "query": {"type": "object"},
+                "policy": {"type": "object"},
+            },
+            "required": ["enum_set", "query", "policy"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}, "result": {"type": "object"}},
+            "required": ["ok", "result"],
+            "additionalProperties": False,
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "ENUM_EMPTY", "when": "enum_set.items is empty"},
+            {"code": "ENUM_INVALID", "when": "enum_set/query structure invalid"},
+            {"code": "TOO_MANY_VALUES", "when": "query.values exceeds max_values"},
+            {"code": "POLICY_INVALID", "when": "policy invalid"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {
+                "enum_set": {"name": "status", "version": "1", "items": [{"key": "OPEN", "aliases": ["open"], "meta": {}}]},
+                "query": {"values": ["open"], "mode": "strict"},
+                "policy": {"case_fold": True, "trim": True, "max_values": 100},
+            },
+            "output": {
+                "ok": True,
+                "result": {"name": "status", "version": "1", "matched": [{"input": "open", "key": "OPEN"}], "missing": [], "duplicates": []},
+            },
+        }
+    ],
+}

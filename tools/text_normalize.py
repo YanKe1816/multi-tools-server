@@ -71,3 +71,75 @@ def text_normalize(data: Input):
             "changes": changes,
         },
     }
+
+
+CONTRACT = {
+    "name": "text_normalize",
+    "version": "1.0.0",
+    "path": "/tools/text_normalize",
+    "description": "Deterministically normalize text using newline, whitespace, and blank line rules.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "minLength": 1, "maxLength": 20000},
+                "mode": {"type": "string", "enum": ["basic", "strict"]},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "meta": {
+                    "type": "object",
+                    "properties": {
+                        "original_length": {"type": "integer"},
+                        "normalized_length": {"type": "integer"},
+                        "changes": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["original_length", "normalized_length", "changes"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["text", "meta"],
+            "additionalProperties": False,
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "TEXT_EMPTY", "when": "text is empty"},
+            {"code": "TEXT_TOO_LONG", "when": "text exceeds max length"},
+            {"code": "MODE_INVALID", "when": "mode is not basic or strict"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {"text": "a\\r\\nb\\n"},
+            "output": {
+                "text": "a\\nb\\n",
+                "meta": {"original_length": 5, "normalized_length": 4, "changes": ["normalized_newlines"]},
+            },
+        }
+    ],
+}

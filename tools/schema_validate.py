@@ -134,3 +134,62 @@ def schema_validate(data: Input):
         _validate(data.schema, data.data, "$", errors)
 
     return {"valid": len(errors) == 0, "errors": errors}
+
+
+CONTRACT = {
+    "name": "schema_validate",
+    "version": "1.0.0",
+    "path": "/tools/schema_validate",
+    "description": "Validate data against a limited JSON Schema subset.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "schema": {"type": "object"},
+                "data": {},
+            },
+            "required": ["schema", "data"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "valid": {"type": "boolean"},
+                "errors": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["valid", "errors"],
+            "additionalProperties": False,
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "DATA_TOO_LARGE", "when": "input data exceeds max length"},
+            {"code": "SCHEMA_UNSUPPORTED", "when": "schema keyword is unsupported"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {"schema": {"type": "string"}, "data": "ok"},
+            "output": {"valid": True, "errors": []},
+        }
+    ],
+}

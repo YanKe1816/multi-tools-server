@@ -3,11 +3,16 @@
 A minimal multi-tool server and governance shell for exposing deterministic tools
 under `/tools/*`.
 
+Docs are generated; do not edit manually.
+
 ## OpenAI review step
 - MCP Server URL: https://multi-tools-server.onrender.com/mcp
 - Scan Tools should find: verify_test (and future tools)
 - `/mcp` is the capability discovery and platform scanning entry point
 - `/mcp` returns the current `/tools/*` list with `name`, `path`, and `description`
+- `/contracts` lists contract summaries for all tools
+- `/contracts/{name}` returns a full contract
+- `/tools/{name}/contract` returns the same full contract
 - `verify_test` is a stability check tool
 - `text_normalize` is the first formal capability
 - `schema_validate` validates data against a limited JSON Schema subset

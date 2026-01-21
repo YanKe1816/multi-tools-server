@@ -131,3 +131,63 @@ def rule_trace(payload: Payload):
     }
 
     return {"ok": True, "trace": trace}
+
+
+CONTRACT = {
+    "name": "rule_trace",
+    "version": "1.0.0",
+    "path": "/tools/rule_trace",
+    "description": "Normalize execution traces with input/output summaries and rule hits.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "run": {"type": "object"},
+                "input": {"type": "object"},
+                "result": {"type": "object"},
+                "policy": {"type": "object"},
+            },
+            "required": ["run", "input", "result", "policy"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}, "trace": {"type": "object"}},
+            "required": ["ok", "trace"],
+            "additionalProperties": False,
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [{"code": "POLICY_INVALID", "when": "hash_alg is not sha256"}],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {
+                "run": {"run_id": "r1", "ts": "t", "actor": "system", "tool": "x", "tool_version": "1", "stage": "s"},
+                "input": {"summary": {"type": "string", "size": 1, "hash": "h"}},
+                "result": {"ok": True, "output_summary": {"type": "string", "size": 1, "hash": "h"}, "rules_hit": []},
+                "policy": {"max_message_length": 200, "hash_alg": "sha256"},
+            },
+            "output": {"ok": True, "trace": {"status": "success"}},
+        }
+    ],
+}

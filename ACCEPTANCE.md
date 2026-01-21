@@ -11,6 +11,7 @@ capability) and all future capabilities.
 5. The documented behavior matches actual behavior without implicit judgment or
    hidden business logic.
 6. The capability has no hidden side effects (no state mutations, no external calls).
+7. The golden test runner passes for all capabilities.
 
 Notes:
 - Acceptance is currently manual.

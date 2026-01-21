@@ -12,6 +12,22 @@
 | schema_diff | /tools/schema_diff | Deterministically diff two JSON Schemas and return added/removed/changed paths. | active |
 | enum_registry | /tools/enum_registry | Deterministically normalize and validate enum sets; returns matched/missing/duplicates. | active |
 
+## Capability Contracts
+Capability contracts provide explicit, deterministic input/output/error shapes for each tool and are used for governance and tool signing. Each tool exposes a contract endpoint and is also listed in the global contracts registry.
+
+| Name | Tool Path | Contract Endpoint |
+|------|-----------|-------------------|
+| verify_test | /tools/verify_test | /tools/verify_test/contract |
+| text_normalize | /tools/text_normalize | /tools/text_normalize/contract |
+| input_gate | /tools/input_gate | /tools/input_gate/contract |
+| schema_validate | /tools/schema_validate | /tools/schema_validate/contract |
+| schema_map | /tools/schema_map | /tools/schema_map/contract |
+| structured_error | /tools/structured_error | /tools/structured_error/contract |
+| capability_contract | /tools/capability_contract | /tools/capability_contract/contract |
+| rule_trace | /tools/rule_trace | /tools/rule_trace/contract |
+| schema_diff | /tools/schema_diff | /tools/schema_diff/contract |
+| enum_registry | /tools/enum_registry | /tools/enum_registry/contract |
+
 Notes:
 - This table is the single source of truth for capabilities merged into `main`.
 - Only accepted capabilities are listed here.

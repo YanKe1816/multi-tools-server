@@ -159,3 +159,68 @@ def structured_error(payload: Input):
             "fingerprint": _fingerprint(tool, stage, error_class, error.code, http_status),
         },
     }
+
+
+CONTRACT = {
+    "name": "structured_error",
+    "version": "1.0.0",
+    "path": "/tools/structured_error",
+    "description": "Normalize error inputs into a structured error envelope.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "object"},
+                "error": {"type": "object"},
+                "policy": {"type": "object"},
+            },
+            "required": ["source", "error", "policy"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "error": {"type": "object"},
+            },
+            "required": ["ok", "error"],
+            "additionalProperties": False,
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "POLICY_INVALID", "when": "policy fields invalid"},
+            {"code": "SOURCE_INVALID", "when": "source fields invalid"},
+            {"code": "ERROR_INVALID", "when": "error.code missing"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {
+                "source": {"tool": "x", "stage": "y", "version": "1"},
+                "error": {"code": "RULES_INVALID", "message": "bad", "http_status": 400},
+                "policy": {"max_message_length": 300, "include_raw_message": True},
+            },
+            "output": {"ok": False, "error": {"class": "RULES_INVALID", "code": "RULES_INVALID"}},
+        }
+    ],
+}

@@ -140,3 +140,67 @@ def schema_map(payload: Input):
         return {"ok": False, "errors": errors}
 
     return {"ok": True, "data": data, "meta": {"applied": applied}}
+
+
+CONTRACT = {
+    "name": "schema_map",
+    "version": "1.0.0",
+    "path": "/tools/schema_map",
+    "description": "Apply deterministic rename/default/drop/require mapping rules to objects.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "data": {"type": "object"},
+                "mapping": {"type": "object"},
+                "mode": {"type": "string", "enum": ["strict", "permissive"]},
+            },
+            "required": ["data", "mapping"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "data": {"type": "object"},
+                "meta": {"type": "object"},
+                "errors": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["ok"],
+            "additionalProperties": True,
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "SOURCE_PATH_MISSING", "when": "rename source missing"},
+            {"code": "REQUIRED_MISSING", "when": "required path missing"},
+            {"code": "MAPPING_INVALID", "when": "invalid mapping path"},
+            {"code": "INPUT_INVALID", "when": "invalid input"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {"data": {"a": 1}, "mapping": {"rename": {"a": "b"}}},
+            "output": {"ok": True, "data": {"b": 1}, "meta": {"applied": ["rename:a->b"]}},
+        }
+    ],
+}

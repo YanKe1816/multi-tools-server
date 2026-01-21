@@ -180,3 +180,72 @@ def input_gate(payload: Input):
         return {"pass": False, "errors": errors}
 
     return {"pass": True}
+
+
+CONTRACT = {
+    "name": "input_gate",
+    "version": "1.0.0",
+    "path": "/tools/input_gate",
+    "description": "Pre-flight input checks for type, size, and structural limits.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "input": {},
+                "rules": {"type": "object"},
+                "mode": {"type": "string", "enum": ["strict", "permissive"]},
+            },
+            "required": ["input"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "oneOf": [
+                {"properties": {"pass": {"type": "boolean"}}, "required": ["pass"]},
+                {
+                    "properties": {
+                        "pass": {"type": "boolean"},
+                        "errors": {"type": "array", "items": {"type": "object"}},
+                    },
+                    "required": ["pass", "errors"],
+                },
+            ],
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "TYPE_NOT_ALLOWED", "when": "input type is not allowed"},
+            {"code": "JSON_TOO_LARGE", "when": "json exceeds max_size"},
+            {"code": "STRING_TOO_SHORT", "when": "string below min_length"},
+            {"code": "STRING_TOO_LONG", "when": "string exceeds max_length"},
+            {"code": "ARRAY_TOO_LONG", "when": "array exceeds max_length"},
+            {"code": "OBJECT_TOO_DEEP", "when": "object exceeds max_depth"},
+            {"code": "OBJECT_TOO_MANY_KEYS", "when": "object exceeds max_keys"},
+            {"code": "RULES_INVALID", "when": "rules are invalid"},
+            {"code": "MODE_INVALID", "when": "mode is invalid"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {"input": {"input": "ok"}, "output": {"pass": True}},
+        {"input": {"input": ""}, "output": {"pass": False, "errors": []}},
+    ],
+}

@@ -9,6 +9,8 @@ from tools.capability_contract import router as capability_contract_router
 from tools.rule_trace import router as rule_trace_router
 from tools.schema_diff import router as schema_diff_router
 from tools.enum_registry import router as enum_registry_router
+from tools._shared.contracts import CONTRACTS, contract_summaries
+from tools._shared.errors import make_error
 
 app = FastAPI(title="Multi-Tools Server")
 
@@ -66,6 +68,12 @@ TOOLS = [
     },
 ]
 
+_tool_names = {tool["name"] for tool in TOOLS}
+_contract_names = set(CONTRACTS.keys())
+missing_contracts = sorted(_tool_names - _contract_names)
+if missing_contracts:
+    raise RuntimeError(f"Missing contracts for tools: {', '.join(missing_contracts)}")
+
 app.include_router(verify_router)
 app.include_router(text_normalize_router)
 app.include_router(schema_validate_router)
@@ -92,3 +100,27 @@ def home():
 @app.get("/mcp")
 def get_manifest():
     return {"tools": TOOLS}
+
+
+@app.get("/contracts")
+def list_contracts():
+    return {"contracts": contract_summaries()}
+
+
+def _get_contract_or_error(name: str):
+    contract = CONTRACTS.get(name)
+    if not contract:
+        response = make_error("CONTRACT_NOT_FOUND", "Contract not found.")
+        response.status_code = 404
+        return response
+    return contract
+
+
+@app.get("/contracts/{name}")
+def get_contract(name: str):
+    return _get_contract_or_error(name)
+
+
+@app.get("/tools/{name}/contract")
+def get_tool_contract(name: str):
+    return _get_contract_or_error(name)

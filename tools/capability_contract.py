@@ -119,3 +119,70 @@ def capability_contract(payload: Input):
 
     normalized = _normalize_contract(payload.contract) if payload.mode == "normalize" else payload.contract.model_dump()
     return {"ok": True, "contract": normalized}
+
+
+CONTRACT = {
+    "name": "capability_contract",
+    "version": "1.0.0",
+    "path": "/tools/capability_contract",
+    "description": "Validate or normalize a machine-readable capability contract.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "capability": {"type": "object"},
+                "contract": {"type": "object"},
+                "mode": {"type": "string", "enum": ["validate", "normalize"]},
+            },
+            "required": ["capability", "contract"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "contract": {"type": "object"},
+                "errors": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["ok"],
+            "additionalProperties": True,
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "SCHEMA_INVALID", "when": "inputs/outputs schema not objects"},
+            {"code": "MODE_INVALID", "when": "mode invalid"},
+            {"code": "FORBIDDEN_VIOLATION", "when": "forbidden flag false"},
+            {"code": "BEHAVIOR_NON_DETERMINISTIC", "when": "deterministic false"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {
+                "capability": {"name": "x", "path": "/tools/x", "version": "1.0.0"},
+                "contract": {"inputs": {"schema": {}}, "outputs": {"schema": {}}},
+                "mode": "validate",
+            },
+            "output": {"ok": True, "contract": {"inputs": {"schema": {}}, "outputs": {"schema": {}}}},
+        }
+    ],
+}

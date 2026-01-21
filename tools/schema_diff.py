@@ -200,3 +200,64 @@ def schema_diff(payload: Input):
 # curl -X POST http://localhost:8000/tools/schema_diff \
 #   -H "Content-Type: application/json" \
 #   -d '{"old_schema":{"type":"object","properties":{"tags":{"type":"array","items":{"type":"string"}}}},"new_schema":{"type":"object","properties":{"tags":{"type":"array","items":{"type":"integer"}}}}}'
+
+
+CONTRACT = {
+    "name": "schema_diff",
+    "version": "1.0.0",
+    "path": "/tools/schema_diff",
+    "description": "Diff two JSON Schemas and return added/removed/changed paths.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "old_schema": {"type": "object"},
+                "new_schema": {"type": "object"},
+                "options": {"type": "object"},
+            },
+            "required": ["old_schema", "new_schema"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}, "diff": {"type": "object"}},
+            "required": ["ok", "diff"],
+            "additionalProperties": False,
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "INVALID_INPUT", "when": "schemas are not objects"},
+            {"code": "OPTIONS_INVALID", "when": "options are not boolean"},
+            {"code": "SCHEMA_UNSUPPORTED", "when": "schema uses unsupported keywords"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {
+                "old_schema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                "new_schema": {"type": "object", "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}},
+            },
+            "output": {"ok": True, "diff": {"added": [{"path": "age", "type": "integer"}], "removed": [], "changed": []}},
+        }
+    ],
+}
