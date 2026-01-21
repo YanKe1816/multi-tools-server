@@ -24,6 +24,12 @@ Docs are generated; do not edit manually.
 - `schema_diff` diffs two JSON Schemas into added/removed/changed paths
 - `enum_registry` deterministically normalizes and validates enum sets for governance-safe matching
 
+### Testing
+Run the test suite locally:
+```bash
+python -m pytest -q
+```
+
 ### Example requests
 ```bash
 curl https://multi-tools-server.onrender.com/mcp
