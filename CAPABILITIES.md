@@ -2,7 +2,7 @@
 
 | Name | Path | Contract Endpoint | Determinism | Acceptance Status |
 |------|------|-------------------|-------------|-------------------|
-| verify_test | /tools/verify_test | /tools/verify_test/contract | Deterministic; no side effects. | FAIL (not evaluated) |
+| verify_test | /tools/verify_test | /tools/verify_test/contract | Deterministic; no side effects. | PASS (2026-01-21; Deterministic / Unified error / Contract aligned / Pytest passing) |
 | text_normalize | /tools/text_normalize | /tools/text_normalize/contract | Deterministic; no side effects. | PASS (2026-01-21; Deterministic / Unified error / Contract aligned / Pytest passing) |
 | input_gate | /tools/input_gate | /tools/input_gate/contract | Deterministic; no side effects. | PASS (2026-01-21; Deterministic / Unified error / Contract aligned / Pytest passing) |
 | schema_validate | /tools/schema_validate | /tools/schema_validate/contract | Deterministic; no side effects. | PASS (2026-01-21; Deterministic / Unified error / Contract aligned / Pytest passing) |
