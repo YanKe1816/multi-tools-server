@@ -7,7 +7,7 @@
 | input_gate | /tools/input_gate | /tools/input_gate/contract | Deterministic; no side effects. | PASS (2026-01-21; Deterministic / Unified error / Contract aligned / Pytest passing) |
 | schema_validate | /tools/schema_validate | /tools/schema_validate/contract | Deterministic; no side effects. | PASS (2026-01-21; Deterministic / Unified error / Contract aligned / Pytest passing) |
 | schema_map | /tools/schema_map | /tools/schema_map/contract | Deterministic; no side effects. | PASS (2026-01-21; Deterministic / Unified error / Contract aligned / Pytest passing) |
-| structured_error | /tools/structured_error | /tools/structured_error/contract | Deterministic; no side effects. | FAIL (not evaluated) |
+| structured_error | /tools/structured_error | /tools/structured_error/contract | Deterministic; no side effects. | PASS (2026-01-21; Deterministic / Unified error / Contract aligned / Pytest passing) |
 | capability_contract | /tools/capability_contract | /tools/capability_contract/contract | Deterministic; no side effects. | FAIL (not evaluated) |
 | rule_trace | /tools/rule_trace | /tools/rule_trace/contract | Deterministic; no side effects. | FAIL (not evaluated) |
 | schema_diff | /tools/schema_diff | /tools/schema_diff/contract | Deterministic; no side effects. | FAIL (not evaluated) |
