@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool, StrictStr, ValidationError
 
 router = APIRouter()
 
@@ -15,16 +16,45 @@ FORBIDDEN_KEYS = {"$ref", "anyOf", "oneOf", "allOf", "not", "if", "then", "else"
 
 
 class Options(BaseModel):
-    compare_required: bool = True
-    compare_type: bool = True
-    compare_enum: bool = True
-    ignore_order: bool = True
+    compare_required: StrictBool = True
+    compare_type: StrictBool = True
+    compare_enum: StrictBool = True
+    ignore_order: StrictBool = True
+
+    class Config:
+        extra = "forbid"
 
 
 class Input(BaseModel):
     old_schema: dict[str, Any]
     new_schema: dict[str, Any]
     options: Options | None = None
+
+    class Config:
+        extra = "forbid"
+
+
+def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
+    raw = f"{tool}|{stage}|{error_class}|{code}|{http_status}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _structured_error(code: str, message: str, http_status: int = 400, path: str = "", error_class: str = "INPUT_INVALID") -> dict[str, Any]:
+    severity = "low" if error_class == "INPUT_INVALID" else "medium"
+    return {
+        "class": error_class,
+        "code": code,
+        "message": message,
+        "retryable": False,
+        "severity": severity,
+        "where": {"tool": "schema_diff", "stage": "validate", "path": path},
+        "http_status": http_status,
+        "fingerprint": _fingerprint("schema_diff", "validate", error_class, code, http_status),
+    }
+
+
+def _response(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "tool": "schema_diff", "version": "1.0", "result": result, "error": None}
 
 
 def _normalize_enum(enum_values: list[Any], ignore_order: bool) -> list[Any]:
@@ -115,53 +145,40 @@ def _detail(parts: list[str]) -> str:
 
 
 @router.post("/tools/schema_diff")
-def schema_diff(payload: Input):
-    options = payload.options or Options()
+def schema_diff(payload: dict[str, Any]):
+    try:
+        data = Input.model_validate(payload)
+    except ValidationError:
+        error = _structured_error("INPUT_INVALID", "Input must match the schema_diff schema.")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_diff", "version": "1.0", "result": None, "error": error})
 
-    if not isinstance(payload.old_schema, dict) or not isinstance(payload.new_schema, dict):
-        return JSONResponse(
-            status_code=400,
-            content={"error": {"code": "INVALID_INPUT", "message": "Schemas must be objects."}},
-        )
+    options = data.options or Options()
 
-    if not isinstance(options.compare_required, bool) or not isinstance(options.compare_type, bool):
-        return JSONResponse(
-            status_code=400,
-            content={"error": {"code": "OPTIONS_INVALID", "message": "Options must be booleans."}},
-        )
-    if not isinstance(options.compare_enum, bool) or not isinstance(options.ignore_order, bool):
-        return JSONResponse(
-            status_code=400,
-            content={"error": {"code": "OPTIONS_INVALID", "message": "Options must be booleans."}},
-        )
-
-    unsupported_old = _find_unsupported(payload.old_schema)
-    unsupported_new = _find_unsupported(payload.new_schema)
+    unsupported_old = _find_unsupported(data.old_schema)
+    unsupported_new = _find_unsupported(data.new_schema)
     unsupported_key = unsupported_old or unsupported_new
     if unsupported_key:
         message = "ref is not supported" if unsupported_key == "$ref" else "unsupported schema keyword"
-        return JSONResponse(
-            status_code=400,
-            content={"error": {"code": "SCHEMA_UNSUPPORTED", "message": message}},
-        )
+        error = _structured_error("SCHEMA_UNSUPPORTED", message, error_class="SCHEMA_UNSUPPORTED", path=unsupported_key)
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_diff", "version": "1.0", "result": None, "error": error})
 
     old_map: dict[str, dict[str, Any]] = {}
     new_map: dict[str, dict[str, Any]] = {}
 
-    _walk_schema(payload.old_schema, "", None, old_map, options.ignore_order)
-    _walk_schema(payload.new_schema, "", None, new_map, options.ignore_order)
+    _walk_schema(data.old_schema, "", None, old_map, options.ignore_order)
+    _walk_schema(data.new_schema, "", None, new_map, options.ignore_order)
 
-    added = []
-    removed = []
-    changed = []
+    added_fields = []
+    removed_fields = []
+    changed_fields = []
 
     for path in sorted(new_map.keys() - old_map.keys()):
         node = new_map[path]
-        added.append({"path": path, "type": node.get("type", "unknown")})
+        added_fields.append({"path": path, "schema": node})
 
     for path in sorted(old_map.keys() - new_map.keys()):
         node = old_map[path]
-        removed.append({"path": path, "type": node.get("type", "unknown")})
+        removed_fields.append({"path": path, "schema": node})
 
     for path in sorted(old_map.keys() & new_map.keys()):
         old_node = old_map[path]
@@ -177,15 +194,15 @@ def schema_diff(payload: Input):
 
         if parts:
             detail = _detail(parts)
-            changed.append(
+            changed_fields.append(
                 {
                     "path": path,
-                    "from": {"type": old_node.get("type", "unknown"), "detail": detail},
-                    "to": {"type": new_node.get("type", "unknown"), "detail": detail},
+                    "before": {**old_node, "detail": detail},
+                    "after": {**new_node, "detail": detail},
                 }
             )
 
-    return {"ok": True, "diff": {"added": added, "removed": removed, "changed": changed}}
+    return _response({"diff": {"added_fields": added_fields, "removed_fields": removed_fields, "changed_fields": changed_fields}})
 
 
 # Self-test hints (local):
@@ -230,8 +247,49 @@ CONTRACT = {
         "content_type": "application/json",
         "json_schema": {
             "type": "object",
-            "properties": {"ok": {"type": "boolean"}, "diff": {"type": "object"}},
-            "required": ["ok", "diff"],
+            "properties": {
+                "ok": {"type": "boolean"},
+                "tool": {"type": "string"},
+                "version": {"type": "string"},
+                "result": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "diff": {
+                            "type": "object",
+                            "properties": {
+                                "added_fields": {"type": "array", "items": {"type": "object"}},
+                                "removed_fields": {"type": "array", "items": {"type": "object"}},
+                                "changed_fields": {"type": "array", "items": {"type": "object"}},
+                            },
+                            "required": ["added_fields", "removed_fields", "changed_fields"],
+                            "additionalProperties": False,
+                        }
+                    },
+                    "required": ["diff"],
+                    "additionalProperties": False,
+                },
+                "error": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "class": {"type": "string"},
+                        "code": {"type": "string"},
+                        "message": {"type": "string"},
+                        "retryable": {"type": "boolean"},
+                        "severity": {"type": "string"},
+                        "where": {
+                            "type": "object",
+                            "properties": {"tool": {"type": "string"}, "stage": {"type": "string"}, "path": {"type": "string"}},
+                            "required": ["tool", "stage", "path"],
+                            "additionalProperties": False,
+                        },
+                        "http_status": {"type": "integer"},
+                        "fingerprint": {"type": "string"},
+                    },
+                    "required": ["class", "code", "message", "retryable", "severity", "where", "http_status", "fingerprint"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["ok", "tool", "version", "result", "error"],
             "additionalProperties": False,
         },
     },
@@ -245,9 +303,8 @@ CONTRACT = {
             }
         },
         "codes": [
-            {"code": "INVALID_INPUT", "when": "schemas are not objects"},
-            {"code": "OPTIONS_INVALID", "when": "options are not boolean"},
             {"code": "SCHEMA_UNSUPPORTED", "when": "schema uses unsupported keywords"},
+            {"code": "INPUT_INVALID", "when": "request body invalid"},
         ],
     },
     "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
@@ -257,7 +314,13 @@ CONTRACT = {
                 "old_schema": {"type": "object", "properties": {"name": {"type": "string"}}},
                 "new_schema": {"type": "object", "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}},
             },
-            "output": {"ok": True, "diff": {"added": [{"path": "age", "type": "integer"}], "removed": [], "changed": []}},
+            "output": {
+                "ok": True,
+                "tool": "schema_diff",
+                "version": "1.0",
+                "result": {"diff": {"added_fields": [{"path": "age", "schema": {"type": "integer"}}], "removed_fields": [], "changed_fields": []}},
+                "error": None,
+            },
         }
     ],
 }
