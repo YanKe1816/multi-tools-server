@@ -1,26 +1,52 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictStr, ValidationError
 
 router = APIRouter()
 
 
 class Mapping(BaseModel):
-    rename: dict[str, str] = {}
-    drop: list[str] = []
-    defaults: dict[str, Any] = {}
-    require: list[str] = []
+    rename: dict[str, str] = Field(default_factory=dict)
+    drop: list[str] = Field(default_factory=list)
+    defaults: dict[str, Any] = Field(default_factory=dict)
+    require: list[str] = Field(default_factory=list)
+
+    class Config:
+        extra = "forbid"
 
 
 class Input(BaseModel):
     data: dict[str, Any]
     mapping: Mapping
-    mode: str = "strict"
+    mode: StrictStr = "strict"
+
+    class Config:
+        extra = "forbid"
+
+
+def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
+    raw = f"{tool}|{stage}|{error_class}|{code}|{http_status}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _structured_error(code: str, message: str, http_status: int = 400, path: str = "") -> dict[str, Any]:
+    error_class = "INPUT_INVALID"
+    return {
+        "class": error_class,
+        "code": code,
+        "message": message,
+        "retryable": False,
+        "severity": "low",
+        "where": {"tool": "schema_map", "stage": "validate", "path": path},
+        "http_status": http_status,
+        "fingerprint": _fingerprint("schema_map", "validate", error_class, code, http_status),
+    }
 
 
 def _is_valid_path(path: str) -> bool:
@@ -76,70 +102,71 @@ def _validate_paths(mapping: Mapping) -> str | None:
     return None
 
 
+def _sorted_errors(errors: list[dict[str, str]]) -> list[dict[str, str]]:
+    return sorted(errors, key=lambda item: (item["path"], item["code"], item["message"]))
+
+
+def _response(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "tool": "schema_map", "version": "1.0", "result": result, "error": None}
+
+
 @router.post("/tools/schema_map")
-def schema_map(payload: Input):
-    if payload.mode not in {"strict", "permissive"}:
-        return JSONResponse(
-            status_code=400,
-            content={"error": {"code": "INPUT_INVALID", "message": "Mode must be strict or permissive."}},
-        )
+def schema_map(payload: dict[str, Any]):
+    try:
+        data = Input.model_validate(payload)
+    except ValidationError:
+        error = _structured_error("INPUT_INVALID", "Input must match the schema_map schema.")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_map", "version": "1.0", "result": None, "error": error})
 
-    invalid_path = _validate_paths(payload.mapping)
+    if data.mode not in {"strict", "permissive"}:
+        error = _structured_error("MODE_INVALID", "Mode must be strict or permissive.")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_map", "version": "1.0", "result": None, "error": error})
+
+    invalid_path = _validate_paths(data.mapping)
     if invalid_path:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "code": "MAPPING_INVALID",
-                    "message": f"Invalid path: {invalid_path}.",
-                }
-            },
-        )
+        error = _structured_error("MAPPING_INVALID", f"Invalid path: {invalid_path}.", path=invalid_path)
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_map", "version": "1.0", "result": None, "error": error})
 
-    data = deepcopy(payload.data)
+    output = deepcopy(data.data)
     errors: list[dict[str, str]] = []
     applied: list[str] = []
 
-    for source, target in payload.mapping.rename.items():
-        found, value = _get_path(data, source)
+    for source, target in sorted(data.mapping.rename.items(), key=lambda item: (item[0], item[1])):
+        found, value = _get_path(output, source)
         if not found:
-            errors.append(
-                {
-                    "path": source,
-                    "code": "SOURCE_PATH_MISSING",
-                    "message": "Rename source path is missing.",
-                }
-            )
+            errors.append({"path": source, "code": "SOURCE_PATH_MISSING", "message": "Rename source path is missing."})
         else:
-            _set_path(data, target, value)
-            _delete_path(data, source)
+            _set_path(output, target, value)
+            _delete_path(output, source)
             applied.append(f"rename:{source}->{target}")
 
-    for target, value in payload.mapping.defaults.items():
-        found, _ = _get_path(data, target)
+    for target in sorted(data.mapping.defaults.keys()):
+        found, _ = _get_path(output, target)
         if not found:
-            _set_path(data, target, value)
+            _set_path(output, target, data.mapping.defaults[target])
             applied.append(f"defaults:{target}")
 
-    for path in payload.mapping.drop:
-        if _delete_path(data, path):
+    for path in sorted(data.mapping.drop):
+        if _delete_path(output, path):
             applied.append(f"drop:{path}")
 
-    for path in payload.mapping.require:
-        found, _ = _get_path(data, path)
+    for path in sorted(data.mapping.require):
+        found, _ = _get_path(output, path)
         if not found:
-            errors.append(
-                {
-                    "path": path,
-                    "code": "REQUIRED_MISSING",
-                    "message": "Required path is missing.",
-                }
-            )
+            errors.append({"path": path, "code": "REQUIRED_MISSING", "message": "Required path is missing."})
 
-    if errors:
-        return {"ok": False, "errors": errors}
+    ordered_errors = _sorted_errors(errors)
+    strict = data.mode == "strict"
+    result_ok = not ordered_errors if strict else True
 
-    return {"ok": True, "data": data, "meta": {"applied": applied}}
+    result: dict[str, Any] = {
+        "ok": result_ok,
+        "data": output if result_ok else None,
+        "meta": {"applied": applied} if result_ok else None,
+        "errors": ordered_errors,
+    }
+
+    return _response(result)
 
 
 CONTRACT = {
@@ -172,12 +199,47 @@ CONTRACT = {
             "type": "object",
             "properties": {
                 "ok": {"type": "boolean"},
-                "data": {"type": "object"},
-                "meta": {"type": "object"},
-                "errors": {"type": "array", "items": {"type": "object"}},
+                "tool": {"type": "string"},
+                "version": {"type": "string"},
+                "result": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "data": {"type": ["object", "null"]},
+                        "meta": {
+                            "type": ["object", "null"],
+                            "properties": {"applied": {"type": "array", "items": {"type": "string"}}},
+                            "required": ["applied"],
+                            "additionalProperties": False,
+                        },
+                        "errors": {"type": "array", "items": {"type": "object"}},
+                    },
+                    "required": ["ok", "data", "meta", "errors"],
+                    "additionalProperties": False,
+                },
+                "error": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "class": {"type": "string"},
+                        "code": {"type": "string"},
+                        "message": {"type": "string"},
+                        "retryable": {"type": "boolean"},
+                        "severity": {"type": "string"},
+                        "where": {
+                            "type": "object",
+                            "properties": {"tool": {"type": "string"}, "stage": {"type": "string"}, "path": {"type": "string"}},
+                            "required": ["tool", "stage", "path"],
+                            "additionalProperties": False,
+                        },
+                        "http_status": {"type": "integer"},
+                        "fingerprint": {"type": "string"},
+                    },
+                    "required": ["class", "code", "message", "retryable", "severity", "where", "http_status", "fingerprint"],
+                    "additionalProperties": False,
+                },
             },
-            "required": ["ok"],
-            "additionalProperties": True,
+            "required": ["ok", "tool", "version", "result", "error"],
+            "additionalProperties": False,
         },
     },
     "errors": {
@@ -193,6 +255,7 @@ CONTRACT = {
             {"code": "SOURCE_PATH_MISSING", "when": "rename source missing"},
             {"code": "REQUIRED_MISSING", "when": "required path missing"},
             {"code": "MAPPING_INVALID", "when": "invalid mapping path"},
+            {"code": "MODE_INVALID", "when": "mode is invalid"},
             {"code": "INPUT_INVALID", "when": "invalid input"},
         ],
     },
@@ -200,7 +263,18 @@ CONTRACT = {
     "examples": [
         {
             "input": {"data": {"a": 1}, "mapping": {"rename": {"a": "b"}}},
-            "output": {"ok": True, "data": {"b": 1}, "meta": {"applied": ["rename:a->b"]}},
+            "output": {
+                "ok": True,
+                "tool": "schema_map",
+                "version": "1.0",
+                "result": {
+                    "ok": True,
+                    "data": {"b": 1},
+                    "meta": {"applied": ["rename:a->b"]},
+                    "errors": [],
+                },
+                "error": None,
+            },
         }
     ],
 }
