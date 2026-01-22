@@ -1,20 +1,56 @@
 from __future__ import annotations
 
+import hashlib
 import json
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 router = APIRouter()
+
+TOOL_NAME = "schema_validate"
+TOOL_VERSION = "1.0"
 
 MAX_DATA_LENGTH = 20000
 
 
 class Input(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     schema: dict[str, Any]
     data: Any
+
+
+def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
+    raw = f"{tool}|{stage}|{error_class}|{code}|{http_status}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16
+
+
+def _structured_error(code: str, message: str, http_status: int = 400, path: str = "") -> dict[str, Any]:
+    error_class = "SCHEMA_UNSUPPORTED" if code == "SCHEMA_UNSUPPORTED" else "INPUT_INVALID"
+    return {
+        "class": error_class,
+        "code": code,
+        "message": message,
+        "retryable": False,
+        "severity": "low",
+        "where": {"tool": TOOL_NAME, "stage": "validate", "path": path},
+        "http_status": http_status,
+        "fingerprint": _fingerprint(TOOL_NAME, "validate", error_class, code, http_status),
+    }
+
+
+def _envelope_ok(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": result, "error": None}
+
+
+def _envelope_fail(http_status: int, error: dict[str, Any]) -> JSONResponse:
+    return JSONResponse(
+        status_code=http_status,
+        content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": error},
+    )
 
 
 def _schema_size(data: Any) -> int:
@@ -53,84 +89,187 @@ def _unsupported_schema(schema: Any) -> str | None:
     return None
 
 
-def _validate(schema: dict[str, Any], data: Any, path: str, errors: list[str]) -> None:
+def _validate(schema: dict[str, Any], data: Any, path: str, issues: list[dict[str, str]]) -> None:
     schema_type = schema.get("type")
+
     if schema_type == "object":
         if not isinstance(data, dict):
-            errors.append(f"{path}: expected object")
+            issues.append({"path": path, "code": "TYPE_MISMATCH", "message": "Expected object."})
             return
+
         required = schema.get("required", [])
-        for key in required:
-            if key not in data:
-                errors.append(f"{path}.{key}: required")
+        if isinstance(required, list):
+            for key in sorted([k for k in required if isinstance(k, str)]):
+                if key not in data:
+                    issues.append({"path": f"{path}.{key}", "code": "REQUIRED_MISSING", "message": "Required field missing."})
+
         properties = schema.get("properties", {})
         if isinstance(properties, dict):
-            for key, child_schema in properties.items():
+            allowed_keys = set([k for k in properties.keys() if isinstance(k, str)])
+            for key in sorted([k for k in data.keys() if isinstance(k, str)]):
+                if key not in allowed_keys:
+                    issues.append({"path": f"{path}.{key}", "code": "ADDITIONAL_PROPERTY", "message": "Additional property not allowed."})
+
+            for key in sorted([k for k in properties.keys() if isinstance(k, str)]):
+                child_schema = properties.get(key)
                 if key in data and isinstance(child_schema, dict):
-                    _validate(child_schema, data[key], f"{path}.{key}", errors)
-    elif schema_type == "string":
+                    _validate(child_schema, data[key], f"{path}.{key}", issues)
+        return
+
+    if schema_type == "string":
         if not isinstance(data, str):
-            errors.append(f"{path}: expected string")
+            issues.append({"path": path, "code": "TYPE_MISMATCH", "message": "Expected string."})
             return
         min_length = schema.get("minLength")
         max_length = schema.get("maxLength")
         if isinstance(min_length, int) and len(data) < min_length:
-            errors.append(f"{path}: minLength {min_length}")
+            issues.append({"path": path, "code": "MIN_LENGTH", "message": f"Minimum length {min_length}."})
         if isinstance(max_length, int) and len(data) > max_length:
-            errors.append(f"{path}: maxLength {max_length}")
+            issues.append({"path": path, "code": "MAX_LENGTH", "message": f"Maximum length {max_length}."})
         allowed = schema.get("enum")
         if isinstance(allowed, list) and data not in allowed:
-            errors.append(f"{path}: enum")
-    elif schema_type == "number":
+            issues.append({"path": path, "code": "ENUM_MISMATCH", "message": "Value not in enum."})
+        return
+
+    if schema_type == "number":
         if not isinstance(data, (int, float)) or isinstance(data, bool):
-            errors.append(f"{path}: expected number")
-    elif schema_type == "integer":
+            issues.append({"path": path, "code": "TYPE_MISMATCH", "message": "Expected number."})
+        return
+
+    if schema_type == "integer":
         if not isinstance(data, int) or isinstance(data, bool):
-            errors.append(f"{path}: expected integer")
-    elif schema_type == "boolean":
+            issues.append({"path": path, "code": "TYPE_MISMATCH", "message": "Expected integer."})
+        return
+
+    if schema_type == "boolean":
         if not isinstance(data, bool):
-            errors.append(f"{path}: expected boolean")
-    elif schema_type == "null":
+            issues.append({"path": path, "code": "TYPE_MISMATCH", "message": "Expected boolean."})
+        return
+
+    if schema_type == "null":
         if data is not None:
-            errors.append(f"{path}: expected null")
-    elif schema_type == "array":
+            issues.append({"path": path, "code": "TYPE_MISMATCH", "message": "Expected null."})
+        return
+
+    if schema_type == "array":
         if not isinstance(data, list):
-            errors.append(f"{path}: expected array")
+            issues.append({"path": path, "code": "TYPE_MISMATCH", "message": "Expected array."})
             return
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
             for index, item in enumerate(data):
-                _validate(item_schema, item, f"{path}[{index}]", errors)
-    else:
-        errors.append(f"{path}: invalid schema type")
+                _validate(item_schema, item, f"{path}[{index}]", issues)
+        return
+
+    issues.append({"path": path, "code": "SCHEMA_INVALID", "message": "Invalid schema type."})
+
+
+def _sorted_issues(issues: list[dict[str, str]]) -> list[dict[str, str]]:
+    return sorted(issues, key=lambda item: (item["path"], item["code"], item["message"]))
 
 
 @router.post("/tools/schema_validate")
-def schema_validate(data: Input):
+def schema_validate(payload: dict[str, Any]):
+    try:
+        data = Input.model_validate(payload)
+    except ValidationError:
+        error = _structured_error("INPUT_INVALID", "Input must match the schema_validate schema.", path="")
+        return _envelope_fail(400, error)
+
     if _schema_size(data.data) > MAX_DATA_LENGTH:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {"code": "DATA_TOO_LARGE", "message": "Input data is too large."}
-            },
-        )
+        error = _structured_error("DATA_TOO_LARGE", "Input data is too large.", path="data")
+        return _envelope_fail(400, error)
+
+    if not isinstance(data.schema, dict):
+        error = _structured_error("SCHEMA_INVALID", "Schema must be an object.", path="schema")
+        return _envelope_fail(400, error)
 
     unsupported_key = _unsupported_schema(data.schema)
     if unsupported_key:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "code": "SCHEMA_UNSUPPORTED",
-                    "message": f"Unsupported schema keyword: {unsupported_key}.",
-                }
+        error = _structured_error("SCHEMA_UNSUPPORTED", f"Unsupported schema keyword: {unsupported_key}.", path=unsupported_key)
+        return _envelope_fail(400, error)
+
+    issues: list[dict[str, str]] = []
+    _validate(data.schema, data.data, "$", issues)
+    ordered_issues = _sorted_issues(issues)
+
+    return _envelope_ok(
+        {
+            "ok": len(ordered_issues) == 0,
+            "issues": ordered_issues,
+            "summary": {"issue_count": len(ordered_issues)},
+        }
+    )
+
+
+CONTRACT: Dict[str, Any] = {
+    "name": "schema_validate",
+    "version": "1.0.0",
+    "path": "/tools/schema_validate",
+    "description": "Validate data against a limited JSON Schema subset.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "schema": {"type": "object"},
+                "data": {},
             },
-        )
-
-    errors: list[str] = []
-    if not isinstance(data.schema, dict):
-        errors.append("$: schema must be an object")
-    else:
-        _validate(data.schema, data.data, "$", errors)
-
-    return {"valid": len(errors) == 0, "errors": errors}
+            "required": ["schema", "data"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "tool": {"type": "string"},
+                "version": {"type": "string"},
+                "result": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "issues": {"type": "array", "items": {"type": "object"}},
+                        "summary": {"type": "object"},
+                    },
+                    "required": ["ok", "issues", "summary"],
+                },
+                "error": {"type": ["object", "null"]},
+            },
+            "required": ["ok", "tool", "version", "result", "error"],
+            "additionalProperties": False,
+        },
+    },
+    "errors": {
+        "envelope": {
+            "error": {"code": "string", "message": "string", "retryable": "boolean", "details": "object"}
+        },
+        "codes": [
+            {"code": "INPUT_INVALID", "when": "request body invalid"},
+            {"code": "DATA_TOO_LARGE", "when": "input data exceeds max length"},
+            {"code": "SCHEMA_UNSUPPORTED", "when": "schema keyword is unsupported"},
+            {"code": "SCHEMA_INVALID", "when": "schema type invalid"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {"schema": {"type": "string"}, "data": "ok"},
+            "output": {
+                "ok": True,
+                "tool": "schema_validate",
+                "version": "1.0",
+                "result": {"ok": True, "issues": [], "summary": {"issue_count": 0}},
+                "error": None,
+            },
+        }
+    ],
+}

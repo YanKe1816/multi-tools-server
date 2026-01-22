@@ -1,133 +1,254 @@
 from __future__ import annotations
 
-from typing import Any
+import hashlib
+from typing import Any, Dict, List
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, ValidationError
 
 router = APIRouter()
 
-
-class Run(BaseModel):
-    run_id: str
-    ts: str
-    actor: str
-    tool: str
-    tool_version: str
-    stage: str
+TOOL_NAME = "rule_trace"
+TOOL_VERSION = "1.0"
 
 
 class Summary(BaseModel):
-    type: str
-    size: int
-    hash: str
+    model_config = ConfigDict(extra="forbid")
+
+    type: StrictStr
+    size: StrictInt
+    hash: StrictStr
 
 
-class RuleHit(BaseModel):
-    rule_id: str
-    kind: str
-    path: str
-    code: str
-    message: str
+class Rule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_id: StrictStr
+    type: StrictStr  # allow / reject / note
+    path: StrictStr
+    matched: StrictBool
+    reason: StrictStr
 
 
-class ResultError(BaseModel):
-    code: str
-    message: str
-    class_name: str | None = Field(default=None, alias="class")
+class InputPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    class Config:
-        allow_population_by_field_name = True
-
-
-class Result(BaseModel):
-    ok: bool
-    output_summary: Summary | None = None
-    rules_hit: list[RuleHit] = []
-    error: ResultError | None = None
-
-
-class Input(BaseModel):
     summary: Summary
 
 
-class Policy(BaseModel):
-    max_message_length: int = 200
-    hash_alg: str = "sha256"
+class Result(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: StrictBool
+    output_summary: Summary | None = None
 
 
 class Payload(BaseModel):
-    run: Run
-    input: Input
+    model_config = ConfigDict(extra="forbid")
+
+    rules: List[Rule]
+    input: InputPayload
     result: Result
-    policy: Policy
 
 
-def _truncate(message: str, limit: int) -> str:
-    if len(message) <= limit:
-        return message
-    return f"{message[:limit]}..."
+def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
+    raw = f"{tool}|{stage}|{error_class}|{code}|{http_status}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _structured_error(code: str, message: str, http_status: int = 400, path: str = "") -> dict[str, Any]:
+    error_class = "INPUT_INVALID"
+    return {
+        "class": error_class,
+        "code": code,
+        "message": message,
+        "retryable": False,
+        "severity": "low",
+        "where": {"tool": TOOL_NAME, "stage": "validate", "path": path},
+        "http_status": http_status,
+        "fingerprint": _fingerprint(TOOL_NAME, "validate", error_class, code, http_status),
+    }
+
+
+def _ok(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": result, "error": None}
+
+
+def _fail(http_status: int, error: dict[str, Any]) -> JSONResponse:
+    return JSONResponse(
+        status_code=http_status,
+        content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": error},
+    )
 
 
 @router.post("/tools/rule_trace")
-def rule_trace(payload: Payload):
-    if payload.policy.hash_alg != "sha256":
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "code": "POLICY_INVALID",
-                    "message": "policy.hash_alg must be sha256.",
-                }
-            },
-        )
+def rule_trace(payload: dict[str, Any]):
+    try:
+        data = Payload.model_validate(payload)
+    except ValidationError:
+        error = _structured_error("INPUT_INVALID", "Input must match the rule_trace schema.", path="")
+        return _fail(400, error)
 
-    max_length = payload.policy.max_message_length
-    rules_hit = []
-    for rule in payload.result.rules_hit:
-        rules_hit.append(
-            {
-                "rule_id": rule.rule_id,
-                "kind": rule.kind,
-                "path": rule.path,
-                "code": rule.code,
-                "message": _truncate(rule.message, max_length),
-            }
-        )
+    allowed_types = {"allow", "reject", "note"}
+    for index, rule in enumerate(data.rules):
+        if rule.type not in allowed_types:
+            error = _structured_error(
+                "RULE_TYPE_UNSUPPORTED",
+                "Rule type is not supported.",
+                path=f"rules[{index}].type",
+            )
+            return _fail(400, error)
 
-    error = payload.result.error
-    if error is not None:
-        _truncate(error.message, max_length)
+    matched_rules: list[dict[str, Any]] = []
+    skipped_rules: list[dict[str, Any]] = []
 
-    if error is not None:
-        status = "error"
-    elif payload.result.ok is False and any(item["kind"] == "reject" for item in rules_hit):
-        status = "rejected"
-    else:
-        status = "success"
+    for rule in data.rules:
+        record = {
+            "rule_id": rule.rule_id,
+            "type": rule.type,
+            "path": rule.path,
+            "reason": rule.reason,
+        }
+        if rule.matched:
+            matched_rules.append(record)
+        else:
+            skipped_rules.append(record)
 
-    output_summary = payload.result.output_summary
+    output_summary = data.result.output_summary
 
     trace = {
-        "run_id": payload.run.run_id,
-        "ts": payload.run.ts,
-        "actor": payload.run.actor,
-        "tool": payload.run.tool,
-        "tool_version": payload.run.tool_version,
-        "stage": payload.run.stage,
         "input": {
-            "type": payload.input.summary.type,
-            "size": payload.input.summary.size,
-            "hash": payload.input.summary.hash,
+            "type": data.input.summary.type,
+            "size": data.input.summary.size,
+            "hash": data.input.summary.hash,
         },
         "output": {
             "type": output_summary.type if output_summary else "",
             "size": output_summary.size if output_summary else 0,
             "hash": output_summary.hash if output_summary else "",
         },
-        "rules_hit": rules_hit,
-        "status": status,
+        "matched_rules": matched_rules,
+        "skipped_rules": skipped_rules,
+        "summary": {
+            "result_ok": bool(data.result.ok),
+            "matched_count": len(matched_rules),
+            "skipped_count": len(skipped_rules),
+        },
     }
 
-    return {"ok": True, "trace": trace}
+    return _ok({"trace": trace})
+
+
+CONTRACT: Dict[str, Any] = {
+    "name": "rule_trace",
+    "version": "1.0.0",
+    "path": "/tools/rule_trace",
+    "description": "Normalize execution traces with input/output summaries and rule hits.",
+    "determinism": {
+        "same_input_same_output": True,
+        "side_effects": False,
+        "network": False,
+        "storage": False,
+    },
+    "inputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "rules": {"type": "array", "items": {"type": "object"}},
+                "input": {"type": "object"},
+                "result": {"type": "object"},
+            },
+            "required": ["rules", "input", "result"],
+            "additionalProperties": False,
+        },
+    },
+    "outputs": {
+        "content_type": "application/json",
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "tool": {"type": "string"},
+                "version": {"type": "string"},
+                "result": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "trace": {
+                            "type": "object",
+                            "properties": {
+                                "input": {"type": "object"},
+                                "output": {"type": "object"},
+                                "matched_rules": {"type": "array", "items": {"type": "object"}},
+                                "skipped_rules": {"type": "array", "items": {"type": "object"}},
+                                "summary": {"type": "object"},
+                            },
+                            "required": ["input", "output", "matched_rules", "skipped_rules", "summary"],
+                            "additionalProperties": False,
+                        }
+                    },
+                    "required": ["trace"],
+                    "additionalProperties": False,
+                },
+                "error": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "class": {"type": "string"},
+                        "code": {"type": "string"},
+                        "message": {"type": "string"},
+                        "retryable": {"type": "boolean"},
+                        "severity": {"type": "string"},
+                        "where": {
+                            "type": "object",
+                            "properties": {
+                                "tool": {"type": "string"},
+                                "stage": {"type": "string"},
+                                "path": {"type": "string"},
+                            },
+                            "required": ["tool", "stage", "path"],
+                            "additionalProperties": False,
+                        },
+                        "http_status": {"type": "integer"},
+                        "fingerprint": {"type": "string"},
+                    },
+                    "required": ["class", "code", "message", "retryable", "severity", "where", "http_status", "fingerprint"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["ok", "tool", "version", "result", "error"],
+            "additionalProperties": False,
+        },
+    },
+    "errors": {
+        "codes": [
+            {"code": "RULE_TYPE_UNSUPPORTED", "when": "rule type not supported"},
+            {"code": "INPUT_INVALID", "when": "request body invalid"},
+        ],
+    },
+    "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
+    "examples": [
+        {
+            "input": {
+                "rules": [{"rule_id": "r1", "type": "allow", "path": "$", "matched": True, "reason": "ok"}],
+                "input": {"summary": {"type": "string", "size": 1, "hash": "h"}},
+                "result": {"ok": True, "output_summary": {"type": "string", "size": 1, "hash": "h"}},
+            },
+            "output": {
+                "ok": True,
+                "tool": "rule_trace",
+                "version": "1.0",
+                "result": {
+                    "trace": {
+                        "input": {"type": "string"},
+                        "output": {"type": "string"},
+                        "matched_rules": [],
+                        "skipped_rules": [],
+                        "summary": {"result_ok": True},
+                    }
+                },
+                "error": None,
+            },
+        }
+    ],
+}
