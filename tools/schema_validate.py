@@ -25,7 +25,7 @@ class Input(BaseModel):
 
 def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
     raw = f"{tool}|{stage}|{error_class}|{code}|{http_status}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def _structured_error(code: str, message: str, http_status: int = 400, path: str = "") -> dict[str, Any]:
