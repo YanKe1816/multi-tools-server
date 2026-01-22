@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Dict
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, StrictStr, ValidationError
+from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError
 
 router = APIRouter()
+
+TOOL_NAME = "input_gate"
+TOOL_VERSION = "1.0"
 
 DEFAULT_RULES = {
     "max_size": 10000,
@@ -20,12 +23,11 @@ DEFAULT_RULES = {
 
 
 class Input(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     input: Any
     rules: dict[str, Any] | None = None
     mode: StrictStr = "strict"
-
-    class Config:
-        extra = "forbid"
 
 
 def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
@@ -41,10 +43,21 @@ def _structured_error(code: str, message: str, http_status: int = 400, path: str
         "message": message,
         "retryable": False,
         "severity": "low",
-        "where": {"tool": "input_gate", "stage": "validate", "path": path},
+        "where": {"tool": TOOL_NAME, "stage": "validate", "path": path},
         "http_status": http_status,
-        "fingerprint": _fingerprint("input_gate", "validate", error_class, code, http_status),
+        "fingerprint": _fingerprint(TOOL_NAME, "validate", error_class, code, http_status),
     }
+
+
+def _ok(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": result, "error": None}
+
+
+def _fail(http_status: int, error: dict[str, Any]) -> JSONResponse:
+    return JSONResponse(
+        status_code=http_status,
+        content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": error},
+    )
 
 
 def _merge_rules(overrides: dict[str, Any] | None) -> dict[str, Any]:
@@ -69,18 +82,23 @@ def _merge_rules(overrides: dict[str, Any] | None) -> dict[str, Any]:
 
 def _rules_valid(rules: dict[str, Any]) -> bool:
     allowed_types = {"object", "array", "string", "number", "boolean", "null"}
-    if not isinstance(rules.get("max_size"), (int, float)):
+
+    max_size = rules.get("max_size")
+    if not isinstance(max_size, (int, float)) or max_size <= 0:
         return False
+
     allow_types = rules.get("allow_types")
     if not isinstance(allow_types, list) or not allow_types:
         return False
     if not all(isinstance(item, str) and item in allowed_types for item in allow_types):
         return False
+
     string_rules = rules.get("string")
     object_rules = rules.get("object")
     array_rules = rules.get("array")
     if not isinstance(string_rules, dict) or not isinstance(object_rules, dict) or not isinstance(array_rules, dict):
         return False
+
     if not isinstance(string_rules.get("min_length"), (int, float)):
         return False
     if not isinstance(string_rules.get("max_length"), (int, float)):
@@ -91,8 +109,7 @@ def _rules_valid(rules: dict[str, Any]) -> bool:
         return False
     if not isinstance(array_rules.get("max_length"), (int, float)):
         return False
-    if rules.get("max_size") <= 0:
-        return False
+
     return True
 
 
@@ -154,17 +171,17 @@ def input_gate(payload: dict[str, Any]):
     try:
         data = Input.model_validate(payload)
     except ValidationError:
-        error = _structured_error("INPUT_INVALID", "Input must match the input_gate schema.")
-        return JSONResponse(status_code=400, content={"ok": False, "tool": "input_gate", "version": "1.0", "result": None, "error": error})
+        error = _structured_error("INPUT_INVALID", "Input must match the input_gate schema.", path="")
+        return _fail(400, error)
 
     if data.mode not in {"strict", "permissive"}:
-        error = _structured_error("MODE_INVALID", "Mode must be strict or permissive.")
-        return JSONResponse(status_code=400, content={"ok": False, "tool": "input_gate", "version": "1.0", "result": None, "error": error})
+        error = _structured_error("MODE_INVALID", "Mode must be strict or permissive.", path="mode")
+        return _fail(400, error)
 
     rules = _merge_rules(data.rules)
     if not _rules_valid(rules):
-        error = _structured_error("RULES_INVALID", "Rules are invalid.")
-        return JSONResponse(status_code=400, content={"ok": False, "tool": "input_gate", "version": "1.0", "result": None, "error": error})
+        error = _structured_error("RULES_INVALID", "Rules are invalid.", path="rules")
+        return _fail(400, error)
 
     reasons: list[dict[str, str]] = []
     strict = data.mode == "strict"
@@ -175,99 +192,57 @@ def input_gate(payload: dict[str, Any]):
 
     value = data.input
     value_type = _type_name(value)
+
     if value_type == "unknown" or value_type not in rules["allow_types"]:
         if add_reason("TYPE_NOT_ALLOWED", "$", "Input type is not allowed."):
-            return {
-                "ok": True,
-                "tool": "input_gate",
-                "version": "1.0",
-                "result": {"pass": False, "reasons": _sorted_reasons(reasons)},
-                "error": None,
-            }
+            return _ok({"pass": False, "reasons": _sorted_reasons(reasons)})
 
     if _json_size(value) > rules["max_size"]:
         if add_reason("JSON_TOO_LARGE", "$", "JSON size exceeds max_size."):
-            return {
-                "ok": True,
-                "tool": "input_gate",
-                "version": "1.0",
-                "result": {"pass": False, "reasons": _sorted_reasons(reasons)},
-                "error": None,
-            }
+            return _ok({"pass": False, "reasons": _sorted_reasons(reasons)})
 
     if value_type == "string":
         length = len(value)
         if length < rules["string"]["min_length"]:
             if add_reason("STRING_TOO_SHORT", "$", "String length is below min_length."):
-                return {
-                    "ok": True,
-                    "tool": "input_gate",
-                    "version": "1.0",
-                    "result": {"pass": False, "reasons": _sorted_reasons(reasons)},
-                    "error": None,
-                }
+                return _ok({"pass": False, "reasons": _sorted_reasons(reasons)})
         if length > rules["string"]["max_length"]:
             if add_reason("STRING_TOO_LONG", "$", "String length exceeds max_length."):
-                return {
-                    "ok": True,
-                    "tool": "input_gate",
-                    "version": "1.0",
-                    "result": {"pass": False, "reasons": _sorted_reasons(reasons)},
-                    "error": None,
-                }
+                return _ok({"pass": False, "reasons": _sorted_reasons(reasons)})
 
     if value_type == "array":
         if len(value) > rules["array"]["max_length"]:
             if add_reason("ARRAY_TOO_LONG", "$", "Array length exceeds max_length."):
-                return {
-                    "ok": True,
-                    "tool": "input_gate",
-                    "version": "1.0",
-                    "result": {"pass": False, "reasons": _sorted_reasons(reasons)},
-                    "error": None,
-                }
+                return _ok({"pass": False, "reasons": _sorted_reasons(reasons)})
 
     if value_type == "object":
         depth = _object_depth(value)
         if depth > rules["object"]["max_depth"]:
             if add_reason("OBJECT_TOO_DEEP", "$", "Object depth exceeds max_depth."):
-                return {
-                    "ok": True,
-                    "tool": "input_gate",
-                    "version": "1.0",
-                    "result": {"pass": False, "reasons": _sorted_reasons(reasons)},
-                    "error": None,
-                }
+                return _ok({"pass": False, "reasons": _sorted_reasons(reasons)})
+
         max_keys = _max_object_keys(value)
         if max_keys > rules["object"]["max_keys"]:
             if add_reason("OBJECT_TOO_MANY_KEYS", "$", "Object key count exceeds max_keys."):
-                return {
-                    "ok": True,
-                    "tool": "input_gate",
-                    "version": "1.0",
-                    "result": {"pass": False, "reasons": _sorted_reasons(reasons)},
-                    "error": None,
-                }
+                return _ok({"pass": False, "reasons": _sorted_reasons(reasons)})
 
     if reasons:
-        return {
-            "ok": True,
-            "tool": "input_gate",
-            "version": "1.0",
-            "result": {"pass": False, "reasons": _sorted_reasons(reasons)},
-            "error": None,
-        }
+        return _ok({"pass": False, "reasons": _sorted_reasons(reasons)})
 
-    return {
-        "ok": True,
-        "tool": "input_gate",
-        "version": "1.0",
-        "result": {"pass": True, "reasons": []},
-        "error": None,
-    }
+    return _ok({"pass": True, "reasons": []})
 
 
-CONTRACT = {
+# Self-test hints (local):
+# curl -X POST http://localhost:8000/tools/input_gate \
+#   -H "Content-Type: application/json" \
+#   -d '{"input":"ok"}'
+#
+# curl -X POST http://localhost:8000/tools/input_gate \
+#   -H "Content-Type: application/json" \
+#   -d '{"input":"x","rules":{"string":{"min_length":2}},"mode":"strict"}'
+
+
+CONTRACT: Dict[str, Any] = {
     "name": "input_gate",
     "version": "1.0.0",
     "path": "/tools/input_gate",
@@ -314,14 +289,6 @@ CONTRACT = {
         },
     },
     "errors": {
-        "envelope": {
-            "error": {
-                "code": "string",
-                "message": "string",
-                "retryable": "boolean",
-                "details": "object",
-            }
-        },
         "codes": [
             {"code": "TYPE_NOT_ALLOWED", "when": "input type is not allowed"},
             {"code": "JSON_TOO_LARGE", "when": "json exceeds max_size"},
