@@ -8,9 +8,12 @@ def test_verify_test_simple_echo():
     assert body == {
         "ok": True,
         "tool": "verify_test",
-        "version": "1.0",
-        "result": {"echo": "hello", "length": 5},
-        "error": None,
+        "version": "1.0.0",
+        "result": {
+            "text": "hello",
+            "length": 5,
+            "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        },
     }
 
 
@@ -18,7 +21,7 @@ def test_verify_test_length_deterministic():
     status, body = request_json(app, "POST", "/tools/verify_test", {"text": "abc"})
     assert status == 200
     assert body["result"]["length"] == 3
-    assert body["result"]["echo"] == "abc"
+    assert body["result"]["text"] == "abc"
 
 
 def test_verify_test_repeat_same_input():
@@ -34,40 +37,26 @@ def test_verify_test_malformed_request():
     status, body = request_json(app, "POST", "/tools/verify_test", {"text": 123})
     assert status == 400
     assert body == {
-        "ok": False,
-        "tool": "verify_test",
-        "version": "1.0",
-        "result": None,
         "error": {
-            "class": "INPUT_INVALID",
             "code": "INPUT_INVALID",
             "message": "Input must match the verify_test schema.",
             "retryable": False,
-            "severity": "low",
-            "where": {"tool": "verify_test", "stage": "validate", "path": ""},
-            "http_status": 400,
-            "fingerprint": "5fcbd1b6691af8f2",
-        },
+            "details": {},
+        }
     }
 
 
-def test_verify_test_missing_required_field():
+def test_verify_test_default_payload():
     status, body = request_json(app, "POST", "/tools/verify_test", {})
-    assert status == 400
+    assert status == 200
     assert body == {
-        "ok": False,
+        "ok": True,
         "tool": "verify_test",
-        "version": "1.0",
-        "result": None,
-        "error": {
-            "class": "INPUT_INVALID",
-            "code": "INPUT_INVALID",
-            "message": "Input must match the verify_test schema.",
-            "retryable": False,
-            "severity": "low",
-            "where": {"tool": "verify_test", "stage": "validate", "path": ""},
-            "http_status": 400,
-            "fingerprint": "5fcbd1b6691af8f2",
+        "version": "1.0.0",
+        "result": {
+            "text": "",
+            "length": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         },
     }
 
@@ -75,5 +64,18 @@ def test_verify_test_missing_required_field():
 def test_verify_test_response_matches_contract():
     status, body = request_json(app, "POST", "/tools/verify_test", {"text": "contract"})
     assert status == 200
-    assert set(body.keys()) == {"ok", "tool", "version", "result", "error"}
-    assert set(body["result"].keys()) == {"echo", "length"}
+    assert set(body.keys()) == {"ok", "tool", "version", "result"}
+    assert set(body["result"].keys()) == {"text", "length", "sha256"}
+
+
+def test_verify_test_too_long():
+    status, body = request_json(app, "POST", "/tools/verify_test", {"text": "abcd", "max_len": 3})
+    assert status == 400
+    assert body == {
+        "error": {
+            "code": "INPUT_TOO_LONG",
+            "message": "Input text exceeds max_len.",
+            "retryable": False,
+            "details": {},
+        }
+    }

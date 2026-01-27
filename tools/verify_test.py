@@ -1,66 +1,44 @@
-from __future__ import annotations
-
-import hashlib
-from typing import Any
-
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError
+from pydantic import BaseModel, Field, StrictInt, StrictStr, ValidationError
+import hashlib
+
+from tools._shared.errors import make_error
 
 router = APIRouter()
 
-TOOL_NAME = "verify_test"
-TOOL_VERSION = "1.0"
-
 
 class Input(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    text: StrictStr
+    text: StrictStr = ""
+    max_len: StrictInt = Field(default=2000, ge=0)
 
-
-def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
-    raw = f"{tool}|{stage}|{error_class}|{code}|{http_status}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
-
-
-def _structured_error(code: str, message: str, http_status: int = 400, path: str = "") -> dict[str, Any]:
-    error_class = "INPUT_INVALID"
-    return {
-        "class": error_class,
-        "code": code,
-        "message": message,
-        "retryable": False,
-        "severity": "low",
-        "where": {"tool": TOOL_NAME, "stage": "validate", "path": path},
-        "http_status": http_status,
-        "fingerprint": _fingerprint(TOOL_NAME, "validate", error_class, code, http_status),
-    }
-
-
-def _response(result: dict[str, Any]) -> dict[str, Any]:
-    return {"ok": True, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": result, "error": None}
+    class Config:
+        extra = "forbid"
 
 
 @router.post("/tools/verify_test")
-def verify_test(payload: dict[str, Any]):
+def verify_test(payload: dict):
     try:
         data = Input.model_validate(payload)
     except ValidationError:
-        err = _structured_error("INPUT_INVALID", "Input must match the verify_test schema.")
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": err},
-        )
+        return make_error("INPUT_INVALID", "Input must match the verify_test schema.")
 
-    result = {"echo": data.text, "length": len(data.text)}
-    return _response(result)
+    if len(data.text) > data.max_len:
+        return make_error("INPUT_TOO_LONG", "Input text exceeds max_len.")
+
+    digest = hashlib.sha256(data.text.encode("utf-8")).hexdigest()
+    return {
+        "ok": True,
+        "tool": "verify_test",
+        "version": "1.0.0",
+        "result": {"text": data.text, "length": len(data.text), "sha256": digest},
+    }
 
 
 CONTRACT = {
     "name": "verify_test",
     "version": "1.0.0",
     "path": "/tools/verify_test",
-    "description": "Echo input text and return its length for stability verification.",
+    "description": "Probe tool for stability verification (deterministic echo + length + sha256).",
     "determinism": {
         "same_input_same_output": True,
         "side_effects": False,
@@ -71,8 +49,8 @@ CONTRACT = {
         "content_type": "application/json",
         "json_schema": {
             "type": "object",
-            "properties": {"text": {"type": "string"}},
-            "required": ["text"],
+            "properties": {"text": {"type": "string"}, "max_len": {"type": "integer"}},
+            "required": [],
             "additionalProperties": False,
         },
     },
@@ -85,39 +63,33 @@ CONTRACT = {
                 "tool": {"type": "string"},
                 "version": {"type": "string"},
                 "result": {
-                    "type": ["object", "null"],
-                    "properties": {"echo": {"type": "string"}, "length": {"type": "integer"}},
-                    "required": ["echo", "length"],
-                    "additionalProperties": False,
-                },
-                "error": {
-                    "type": ["object", "null"],
+                    "type": "object",
                     "properties": {
-                        "class": {"type": "string"},
-                        "code": {"type": "string"},
-                        "message": {"type": "string"},
-                        "retryable": {"type": "boolean"},
-                        "severity": {"type": "string"},
-                        "where": {
-                            "type": "object",
-                            "properties": {"tool": {"type": "string"}, "stage": {"type": "string"}, "path": {"type": "string"}},
-                            "required": ["tool", "stage", "path"],
-                            "additionalProperties": False,
-                        },
-                        "http_status": {"type": "integer"},
-                        "fingerprint": {"type": "string"},
+                        "text": {"type": "string"},
+                        "length": {"type": "integer"},
+                        "sha256": {"type": "string"},
                     },
-                    "required": ["class", "code", "message", "retryable", "severity", "where", "http_status", "fingerprint"],
+                    "required": ["text", "length", "sha256"],
                     "additionalProperties": False,
                 },
             },
-            "required": ["ok", "tool", "version", "result", "error"],
+            "required": ["ok", "tool", "version", "result"],
             "additionalProperties": False,
         },
     },
     "errors": {
-        "envelope": {"error": {"code": "string", "message": "string", "retryable": "boolean", "details": "object"}},
-        "codes": [{"code": "INPUT_INVALID", "when": "request body invalid"}],
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "INPUT_INVALID", "when": "request body invalid"},
+            {"code": "INPUT_TOO_LONG", "when": "text exceeds max_len"},
+        ],
     },
     "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
     "examples": [
@@ -126,9 +98,12 @@ CONTRACT = {
             "output": {
                 "ok": True,
                 "tool": "verify_test",
-                "version": "1.0",
-                "result": {"echo": "hello", "length": 5},
-                "error": None,
+                "version": "1.0.0",
+                "result": {
+                    "text": "hello",
+                    "length": 5,
+                    "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                },
             },
         }
     ],
