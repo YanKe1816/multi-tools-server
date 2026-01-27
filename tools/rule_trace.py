@@ -1,57 +1,55 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from typing import Any, Dict, List
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, StrictBool, StrictInt, StrictStr, ValidationError
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, ValidationError
 
 router = APIRouter()
 
+TOOL_NAME = "rule_trace"
+TOOL_VERSION = "1.0"
+
 
 class Summary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: StrictStr
     size: StrictInt
     hash: StrictStr
 
-    class Config:
-        extra = "forbid"
-
 
 class Rule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     rule_id: StrictStr
-    type: StrictStr
+    type: StrictStr  # allow / reject / note
     path: StrictStr
     matched: StrictBool
     reason: StrictStr
 
-    class Config:
-        extra = "forbid"
-
 
 class InputPayload(BaseModel):
-    summary: Summary
+    model_config = ConfigDict(extra="forbid")
 
-    class Config:
-        extra = "forbid"
+    summary: Summary
 
 
 class Result(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     ok: StrictBool
     output_summary: Summary | None = None
 
-    class Config:
-        extra = "forbid"
-
 
 class Payload(BaseModel):
-    rules: list[Rule]
+    model_config = ConfigDict(extra="forbid")
+
+    rules: List[Rule]
     input: InputPayload
     result: Result
-
-    class Config:
-        extra = "forbid"
 
 
 def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
@@ -67,14 +65,21 @@ def _structured_error(code: str, message: str, http_status: int = 400, path: str
         "message": message,
         "retryable": False,
         "severity": "low",
-        "where": {"tool": "rule_trace", "stage": "validate", "path": path},
+        "where": {"tool": TOOL_NAME, "stage": "validate", "path": path},
         "http_status": http_status,
-        "fingerprint": _fingerprint("rule_trace", "validate", error_class, code, http_status),
+        "fingerprint": _fingerprint(TOOL_NAME, "validate", error_class, code, http_status),
     }
 
 
-def _response(result: dict[str, Any]) -> dict[str, Any]:
-    return {"ok": True, "tool": "rule_trace", "version": "1.0", "result": result, "error": None}
+def _ok(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": result, "error": None}
+
+
+def _fail(http_status: int, error: dict[str, Any]) -> JSONResponse:
+    return JSONResponse(
+        status_code=http_status,
+        content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": error},
+    )
 
 
 @router.post("/tools/rule_trace")
@@ -82,17 +87,22 @@ def rule_trace(payload: dict[str, Any]):
     try:
         data = Payload.model_validate(payload)
     except ValidationError:
-        error = _structured_error("INPUT_INVALID", "Input must match the rule_trace schema.")
-        return JSONResponse(status_code=400, content={"ok": False, "tool": "rule_trace", "version": "1.0", "result": None, "error": error})
+        error = _structured_error("INPUT_INVALID", "Input must match the rule_trace schema.", path="")
+        return _fail(400, error)
 
     allowed_types = {"allow", "reject", "note"}
     for index, rule in enumerate(data.rules):
         if rule.type not in allowed_types:
-            error = _structured_error("RULE_TYPE_UNSUPPORTED", "Rule type is not supported.", path=f"rules[{index}].type")
-            return JSONResponse(status_code=400, content={"ok": False, "tool": "rule_trace", "version": "1.0", "result": None, "error": error})
+            error = _structured_error(
+                "RULE_TYPE_UNSUPPORTED",
+                "Rule type is not supported.",
+                path=f"rules[{index}].type",
+            )
+            return _fail(400, error)
 
-    matched_rules = []
-    skipped_rules = []
+    matched_rules: list[dict[str, Any]] = []
+    skipped_rules: list[dict[str, Any]] = []
+
     for rule in data.rules:
         record = {
             "rule_id": rule.rule_id,
@@ -106,6 +116,7 @@ def rule_trace(payload: dict[str, Any]):
             skipped_rules.append(record)
 
     output_summary = data.result.output_summary
+
     trace = {
         "input": {
             "type": data.input.summary.type,
@@ -120,16 +131,16 @@ def rule_trace(payload: dict[str, Any]):
         "matched_rules": matched_rules,
         "skipped_rules": skipped_rules,
         "summary": {
-            "result_ok": data.result.ok,
+            "result_ok": bool(data.result.ok),
             "matched_count": len(matched_rules),
             "skipped_count": len(skipped_rules),
         },
     }
 
-    return _response({"trace": trace})
+    return _ok({"trace": trace})
 
 
-CONTRACT = {
+CONTRACT: Dict[str, Any] = {
     "name": "rule_trace",
     "version": "1.0.0",
     "path": "/tools/rule_trace",
@@ -190,7 +201,11 @@ CONTRACT = {
                         "severity": {"type": "string"},
                         "where": {
                             "type": "object",
-                            "properties": {"tool": {"type": "string"}, "stage": {"type": "string"}, "path": {"type": "string"}},
+                            "properties": {
+                                "tool": {"type": "string"},
+                                "stage": {"type": "string"},
+                                "path": {"type": "string"},
+                            },
                             "required": ["tool", "stage", "path"],
                             "additionalProperties": False,
                         },
@@ -206,14 +221,6 @@ CONTRACT = {
         },
     },
     "errors": {
-        "envelope": {
-            "error": {
-                "code": "string",
-                "message": "string",
-                "retryable": "boolean",
-                "details": "object",
-            }
-        },
         "codes": [
             {"code": "RULE_TYPE_UNSUPPORTED", "when": "rule type not supported"},
             {"code": "INPUT_INVALID", "when": "request body invalid"},
