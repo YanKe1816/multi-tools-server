@@ -14,65 +14,40 @@ from tools._shared.errors import make_error
 
 app = FastAPI(title="Multi-Tools Server")
 
-
-TOOLS = [
-    {
-        "name": "verify_test",
-        "path": "/tools/verify_test",
-        "description": "Echo input text and return its length. Used to verify service stability.",
-    },
-    {
-        "name": "text_normalize",
-        "path": "/tools/text_normalize",
-        "description": "Deterministic text normalization (newline, whitespace, blank lines, tabs).",
-    },
-    {
-        "name": "schema_validate",
-        "path": "/tools/schema_validate",
-        "description": "Deterministic validation against a limited JSON Schema subset.",
-    },
-    {
-        "name": "schema_map",
-        "path": "/tools/schema_map",
-        "description": "Deterministic object mapping with rename/drop/default/require rules.",
-    },
-    {
-        "name": "input_gate",
-        "path": "/tools/input_gate",
-        "description": "Pre-flight input checks for type, size, and structure constraints.",
-    },
-    {
-        "name": "structured_error",
-        "path": "/tools/structured_error",
-        "description": "Normalize error inputs into a structured error envelope.",
-    },
-    {
-        "name": "capability_contract",
-        "path": "/tools/capability_contract",
-        "description": "Validate or normalize a machine-readable capability contract.",
-    },
-    {
-        "name": "rule_trace",
-        "path": "/tools/rule_trace",
-        "description": "Normalize execution traces with input/output summaries and rule hits.",
-    },
-    {
-        "name": "schema_diff",
-        "path": "/tools/schema_diff",
-        "description": "Deterministically diff two JSON Schemas and return added/removed/changed paths.",
-    },
-    {
-        "name": "enum_registry",
-        "path": "/tools/enum_registry",
-        "description": "Deterministically register/normalize/validate enum sets for matching query values; returns matched/missing/duplicates.",
-    },
+TOOL_ORDER = [
+    "verify_test",
+    "text_normalize",
+    "input_gate",
+    "schema_validate",
+    "schema_map",
+    "structured_error",
+    "capability_contract",
+    "rule_trace",
+    "schema_diff",
+    "enum_registry",
 ]
 
-_tool_names = {tool["name"] for tool in TOOLS}
-_contract_names = set(CONTRACTS.keys())
-missing_contracts = sorted(_tool_names - _contract_names)
+missing_contracts = sorted(name for name in TOOL_ORDER if name not in CONTRACTS)
 if missing_contracts:
     raise RuntimeError(f"Missing contracts for tools: {', '.join(missing_contracts)}")
+
+_extra_tools = sorted(name for name in CONTRACTS.keys() if name not in TOOL_ORDER)
+
+
+def _tool_entry(contract: dict) -> dict:
+    name = contract["name"]
+    return {
+        "name": name,
+        "path": contract["path"],
+        "version": contract["version"],
+        "description": contract["description"],
+        "contract_url": f"/contracts/{name}",
+    }
+
+
+def _tools_manifest() -> list[dict]:
+    ordered_names = [*TOOL_ORDER, *_extra_tools]
+    return [_tool_entry(CONTRACTS[name]) for name in ordered_names]
 
 app.include_router(verify_router)
 app.include_router(text_normalize_router)
@@ -99,7 +74,7 @@ def home():
 
 @app.get("/mcp")
 def get_manifest():
-    return {"tools": TOOLS}
+    return {"tools": _tools_manifest(), "contracts": "/contracts"}
 
 
 @app.get("/contracts")
