@@ -1,5 +1,4 @@
-"""
-text_normalize
+"""text_normalize
 
 Request JSON schema:
 {
@@ -90,17 +89,12 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, ValidationError
+from pydantic import BaseModel, Field, StrictBool, StrictStr, ValidationError
 
 router = APIRouter()
 
-TOOL_NAME = "text_normalize"
-TOOL_VERSION = "1.0"
-
 
 class Ops(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     normalize_newlines: StrictBool = False
     collapse_whitespace: StrictBool = False
     trim: StrictBool = False
@@ -108,20 +102,25 @@ class Ops(BaseModel):
     to_upper: StrictBool = False
     remove_control_chars: StrictBool = False
 
+    class Config:
+        extra = "forbid"
+
 
 class Options(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     preserve_tabs: StrictBool = True
     preserve_newlines: StrictBool = True
 
+    class Config:
+        extra = "forbid"
+
 
 class Input(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     text: StrictStr
     ops: Ops = Field(default_factory=Ops)
     options: Options = Field(default_factory=Options)
+
+    class Config:
+        extra = "forbid"
 
 
 def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
@@ -137,9 +136,9 @@ def _structured_error(code: str, message: str, http_status: int = 400, path: str
         "message": message,
         "retryable": False,
         "severity": "low",
-        "where": {"tool": TOOL_NAME, "stage": "validate", "path": path},
+        "where": {"tool": "text_normalize", "stage": "validate", "path": path},
         "http_status": http_status,
-        "fingerprint": _fingerprint(TOOL_NAME, "validate", error_class, code, http_status),
+        "fingerprint": _fingerprint("text_normalize", "validate", error_class, code, http_status),
     }
 
 
@@ -153,7 +152,6 @@ def _collapse_whitespace(text: str, preserve_tabs: bool, preserve_newlines: bool
             else:
                 collapsed_lines.append(re.sub(r"[\t ]+", " ", line))
         return "\n".join(collapsed_lines)
-
     if preserve_tabs:
         return re.sub(r"[ ]+", " ", text)
     return re.sub(r"[\t ]+", " ", text)
@@ -173,11 +171,8 @@ def text_normalize(payload: dict[str, Any]):
     try:
         data = Input.model_validate(payload)
     except ValidationError:
-        err = _structured_error("INPUT_INVALID", "Input must match the text_normalize schema.")
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": err},
-        )
+        error = _structured_error("INPUT_INVALID", "Input must match the text_normalize schema.")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "text_normalize", "version": "1.0", "result": None, "error": error})
 
     text = data.text
     ops = data.ops
@@ -222,8 +217,8 @@ def text_normalize(payload: dict[str, Any]):
 
     return {
         "ok": True,
-        "tool": TOOL_NAME,
-        "version": TOOL_VERSION,
+        "tool": "text_normalize",
+        "version": "1.0",
         "result": {
             "text": text,
             "meta": {
@@ -314,11 +309,7 @@ CONTRACT = {
                         "severity": {"type": "string"},
                         "where": {
                             "type": "object",
-                            "properties": {
-                                "tool": {"type": "string"},
-                                "stage": {"type": "string"},
-                                "path": {"type": "string"},
-                            },
+                            "properties": {"tool": {"type": "string"}, "stage": {"type": "string"}, "path": {"type": "string"}},
                             "required": ["tool", "stage", "path"],
                             "additionalProperties": False,
                         },
@@ -334,8 +325,17 @@ CONTRACT = {
         },
     },
     "errors": {
-        "envelope": {"error": {"code": "string", "message": "string", "retryable": "boolean", "details": "object"}},
-        "codes": [{"code": "INPUT_INVALID", "when": "input does not match schema"}],
+        "envelope": {
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
+        },
+        "codes": [
+            {"code": "INPUT_INVALID", "when": "input does not match schema"},
+        ],
     },
     "non_goals": ["no advice", "no decisions", "no inference", "no external calls"],
     "examples": [

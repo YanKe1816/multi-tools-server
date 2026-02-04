@@ -1,50 +1,51 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, Field, StrictBool, StrictInt, StrictStr, ValidationError
 
 router = APIRouter()
 
-TOOL_NAME = "structured_error"
-TOOL_VERSION = "1.0"
-
 
 class Source(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    tool: StrictStr
+    stage: StrictStr
+    version: StrictStr | None = ""
 
-    tool: str
-    stage: str
-    version: str | None = ""
+    class Config:
+        extra = "forbid"
 
 
 class ErrorInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    code: str | None = ""
-    message: str | None = ""
-    type: str | None = ""
-    http_status: int | None = 0
-    path: str | None = ""
+    code: StrictStr | None = ""
+    message: StrictStr | None = ""
+    type: StrictStr | None = ""
+    http_status: StrictInt | None = 0
+    path: StrictStr | None = ""
     details: dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        extra = "forbid"
 
 
 class Policy(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    max_message_length: StrictInt = 300
+    include_raw_message: StrictBool = True
 
-    max_message_length: int = 300
-    include_raw_message: bool = True
+    class Config:
+        extra = "forbid"
 
 
 class Input(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     source: Source
     error: Any
     policy: Policy
+
+    class Config:
+        extra = "forbid"
 
 
 def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
@@ -60,20 +61,16 @@ def _structured_error(code: str, message: str, http_status: int = 400, path: str
         "message": message,
         "retryable": False,
         "severity": "low",
-        "where": {"tool": TOOL_NAME, "stage": "validate", "path": path},
+        "where": {"tool": "structured_error", "stage": "validate", "path": path},
         "http_status": http_status,
-        "fingerprint": _fingerprint(TOOL_NAME, "validate", error_class, code, http_status),
+        "fingerprint": _fingerprint("structured_error", "validate", error_class, code, http_status),
     }
 
 
-def _response(result: dict[str, Any]) -> dict[str, Any]:
-    return {"ok": True, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": result, "error": None}
-
-
 def _classify_error(code: str, http_status: int, message: str, error_type: str) -> str:
-    code_upper = (code or "").upper()
-    message_upper = (message or "").upper()
-    type_upper = (error_type or "").upper()
+    code_upper = code.upper()
+    message_upper = message.upper()
+    type_upper = error_type.upper()
 
     if code_upper.startswith("INPUT_"):
         return "INPUT_INVALID"
@@ -108,11 +105,13 @@ def _severity(error_class: str) -> str:
     return "medium"
 
 
+def _response(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "tool": "structured_error", "version": "1.0", "result": result, "error": None}
+
+
 def _extract_error(error_input: Any) -> ErrorInput:
-    # allow: string | object | {"error": {...}} | already-normalized-ish
     if isinstance(error_input, str):
         return ErrorInput(code="", message=error_input, type="", http_status=0, path="", details={})
-
     if isinstance(error_input, dict):
         if "error" in error_input and isinstance(error_input["error"], dict):
             nested = error_input["error"]
@@ -124,7 +123,6 @@ def _extract_error(error_input: Any) -> ErrorInput:
                 path=str(nested.get("path", "")),
                 details=nested.get("details", {}) if isinstance(nested.get("details"), dict) else {},
             )
-
         return ErrorInput(
             code=str(error_input.get("code", "")),
             message=str(error_input.get("message", error_input.get("detail", ""))),
@@ -133,7 +131,6 @@ def _extract_error(error_input: Any) -> ErrorInput:
             path=str(error_input.get("path", "")),
             details=error_input.get("details", {}) if isinstance(error_input.get("details"), dict) else {},
         )
-
     raise TypeError("error must be an object or string.")
 
 
@@ -142,66 +139,48 @@ def structured_error(payload: dict[str, Any]):
     try:
         data = Input.model_validate(payload)
     except ValidationError:
-        err = _structured_error("INPUT_INVALID", "Input must match the structured_error schema.", path="")
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": err},
-        )
+        error = _structured_error("INPUT_INVALID", "Input must match the structured_error schema.")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "structured_error", "version": "1.0", "result": None, "error": error})
 
     policy = data.policy
-    if not isinstance(policy.max_message_length, int) or not 1 <= policy.max_message_length <= 5000:
-        err = _structured_error(
-            "POLICY_INVALID",
-            "policy.max_message_length must be an integer between 1 and 5000.",
-            path="policy.max_message_length",
-        )
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": err},
-        )
+    if not 1 <= policy.max_message_length <= 5000:
+        error = _structured_error("POLICY_INVALID", "policy.max_message_length must be an integer between 1 and 5000.", path="policy.max_message_length")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "structured_error", "version": "1.0", "result": None, "error": error})
 
     source = data.source
-    if not isinstance(source.tool, str) or not source.tool.strip():
-        err = _structured_error("SOURCE_INVALID", "source.tool must be a non-empty string.", path="source.tool")
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": err},
-        )
-    if not isinstance(source.stage, str) or not source.stage.strip():
-        err = _structured_error("SOURCE_INVALID", "source.stage must be a non-empty string.", path="source.stage")
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": err},
-        )
+    if not source.tool.strip():
+        error = _structured_error("SOURCE_INVALID", "source.tool must be a non-empty string.", path="source.tool")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "structured_error", "version": "1.0", "result": None, "error": error})
+    if not source.stage.strip():
+        error = _structured_error("SOURCE_INVALID", "source.stage must be a non-empty string.", path="source.stage")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "structured_error", "version": "1.0", "result": None, "error": error})
 
     try:
         error_input = _extract_error(data.error)
     except TypeError:
-        err = _structured_error("ERROR_INVALID", "error must be an object or string.", path="error")
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": err},
-        )
+        error = _structured_error("ERROR_INVALID", "error must be an object or string.", path="error")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "structured_error", "version": "1.0", "result": None, "error": error})
 
     raw_message = error_input.message or ""
     message = raw_message if policy.include_raw_message else ""
     if len(message) > policy.max_message_length:
         message = f"{message[:policy.max_message_length]}..."
 
-    http_status = int(error_input.http_status or 0)
+    http_status = error_input.http_status or 0
     error_type = error_input.type or ""
-    code = (error_input.code or "").strip()
-
+    code = error_input.code.strip() if error_input.code else ""
     error_class = _classify_error(code, http_status, raw_message, error_type)
     if not code:
         code = error_class
+    retryable = _retryable(error_class)
+    severity = _severity(error_class)
 
     normalized = {
         "class": error_class,
         "code": code,
         "message": message,
-        "retryable": _retryable(error_class),
-        "severity": _severity(error_class),
+        "retryable": retryable,
+        "severity": severity,
         "where": {"tool": source.tool, "stage": source.stage, "path": error_input.path or ""},
         "http_status": http_status,
         "fingerprint": _fingerprint(source.tool, source.stage, error_class, code, http_status),
@@ -210,7 +189,7 @@ def structured_error(payload: dict[str, Any]):
     return _response({"error": normalized})
 
 
-CONTRACT: Dict[str, Any] = {
+CONTRACT = {
     "name": "structured_error",
     "version": "1.0.0",
     "path": "/tools/structured_error",
@@ -255,34 +234,40 @@ CONTRACT: Dict[str, Any] = {
                                 "severity": {"type": "string"},
                                 "where": {
                                     "type": "object",
-                                    "properties": {
-                                        "tool": {"type": "string"},
-                                        "stage": {"type": "string"},
-                                        "path": {"type": "string"},
-                                    },
+                                    "properties": {"tool": {"type": "string"}, "stage": {"type": "string"}, "path": {"type": "string"}},
                                     "required": ["tool", "stage", "path"],
                                     "additionalProperties": False,
                                 },
                                 "http_status": {"type": "integer"},
                                 "fingerprint": {"type": "string"},
                             },
-                            "required": [
-                                "class",
-                                "code",
-                                "message",
-                                "retryable",
-                                "severity",
-                                "where",
-                                "http_status",
-                                "fingerprint",
-                            ],
+                            "required": ["class", "code", "message", "retryable", "severity", "where", "http_status", "fingerprint"],
                             "additionalProperties": False,
                         }
                     },
                     "required": ["error"],
                     "additionalProperties": False,
                 },
-                "error": {"type": ["object", "null"]},
+                "error": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "class": {"type": "string"},
+                        "code": {"type": "string"},
+                        "message": {"type": "string"},
+                        "retryable": {"type": "boolean"},
+                        "severity": {"type": "string"},
+                        "where": {
+                            "type": "object",
+                            "properties": {"tool": {"type": "string"}, "stage": {"type": "string"}, "path": {"type": "string"}},
+                            "required": ["tool", "stage", "path"],
+                            "additionalProperties": False,
+                        },
+                        "http_status": {"type": "integer"},
+                        "fingerprint": {"type": "string"},
+                    },
+                    "required": ["class", "code", "message", "retryable", "severity", "where", "http_status", "fingerprint"],
+                    "additionalProperties": False,
+                },
             },
             "required": ["ok", "tool", "version", "result", "error"],
             "additionalProperties": False,
@@ -290,7 +275,12 @@ CONTRACT: Dict[str, Any] = {
     },
     "errors": {
         "envelope": {
-            "error": {"code": "string", "message": "string", "retryable": "boolean", "details": "object"}
+            "error": {
+                "code": "string",
+                "message": "string",
+                "retryable": "boolean",
+                "details": "object",
+            }
         },
         "codes": [
             {"code": "POLICY_INVALID", "when": "policy fields invalid"},

@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 import json
-from typing import Any, Dict, List, Optional
+import hashlib
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, ValidationError
+from pydantic import BaseModel, StrictBool, StrictStr, ValidationError
 
 router = APIRouter()
-
-TOOL_NAME = "schema_diff"
-TOOL_VERSION = "1.0"
 
 SUPPORTED_TYPES = {"object", "array", "string", "number", "integer", "boolean", "null"}
 ALLOWED_KEYS = {"type", "properties", "required", "items", "enum"}
@@ -19,20 +16,22 @@ FORBIDDEN_KEYS = {"$ref", "anyOf", "oneOf", "allOf", "not", "if", "then", "else"
 
 
 class Options(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     compare_required: StrictBool = True
     compare_type: StrictBool = True
     compare_enum: StrictBool = True
     ignore_order: StrictBool = True
 
+    class Config:
+        extra = "forbid"
+
 
 class Input(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     old_schema: dict[str, Any]
     new_schema: dict[str, Any]
-    options: Optional[Options] = None
+    options: Options | None = None
+
+    class Config:
+        extra = "forbid"
 
 
 def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
@@ -40,13 +39,7 @@ def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def _structured_error(
-    code: str,
-    message: str,
-    http_status: int = 400,
-    path: str = "",
-    error_class: str = "INPUT_INVALID",
-) -> dict[str, Any]:
+def _structured_error(code: str, message: str, http_status: int = 400, path: str = "", error_class: str = "INPUT_INVALID") -> dict[str, Any]:
     severity = "low" if error_class == "INPUT_INVALID" else "medium"
     return {
         "class": error_class,
@@ -54,21 +47,14 @@ def _structured_error(
         "message": message,
         "retryable": False,
         "severity": severity,
-        "where": {"tool": TOOL_NAME, "stage": "validate", "path": path},
+        "where": {"tool": "schema_diff", "stage": "validate", "path": path},
         "http_status": http_status,
-        "fingerprint": _fingerprint(TOOL_NAME, "validate", error_class, code, http_status),
+        "fingerprint": _fingerprint("schema_diff", "validate", error_class, code, http_status),
     }
 
 
-def _ok(result: dict[str, Any]) -> dict[str, Any]:
-    return {"ok": True, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": result, "error": None}
-
-
-def _fail(http_status: int, error: dict[str, Any]) -> JSONResponse:
-    return JSONResponse(
-        status_code=http_status,
-        content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": error},
-    )
+def _response(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "tool": "schema_diff", "version": "1.0", "result": result, "error": None}
 
 
 def _normalize_enum(enum_values: list[Any], ignore_order: bool) -> list[Any]:
@@ -76,7 +62,7 @@ def _normalize_enum(enum_values: list[Any], ignore_order: bool) -> list[Any]:
         try:
             return sorted(set(enum_values))
         except TypeError:
-            return sorted(enum_values, key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False))
+            return sorted(enum_values, key=lambda item: json.dumps(item, sort_keys=True))
     return list(enum_values)
 
 
@@ -87,11 +73,9 @@ def _find_unsupported(schema: Any) -> str | None:
                 return key
             if key not in ALLOWED_KEYS:
                 return key
-
             if key == "type":
                 if not isinstance(value, str) or value not in SUPPORTED_TYPES:
                     return key
-
             if key == "properties":
                 if not isinstance(value, dict):
                     return key
@@ -99,30 +83,24 @@ def _find_unsupported(schema: Any) -> str | None:
                     unsupported = _find_unsupported(child)
                     if unsupported:
                         return unsupported
-
             if key == "required":
                 if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                     return key
-
             if key == "items":
                 if not isinstance(value, dict):
                     return key
                 unsupported = _find_unsupported(value)
                 if unsupported:
                     return unsupported
-
             if key == "enum":
                 if not isinstance(value, list):
                     return key
-
         return None
-
     if isinstance(schema, list):
         for item in schema:
             unsupported = _find_unsupported(item)
             if unsupported:
                 return unsupported
-
     return None
 
 
@@ -155,7 +133,6 @@ def _walk_schema(
                 child_path = f"{path}.{key}" if path else key
                 if isinstance(child, dict):
                     _walk_schema(child, child_path, key in required_set, mapping, ignore_order)
-
     if node_type == "array":
         items = schema.get("items")
         if isinstance(items, dict):
@@ -172,8 +149,8 @@ def schema_diff(payload: dict[str, Any]):
     try:
         data = Input.model_validate(payload)
     except ValidationError:
-        error = _structured_error("INPUT_INVALID", "Input must match the schema_diff schema.", path="")
-        return _fail(400, error)
+        error = _structured_error("INPUT_INVALID", "Input must match the schema_diff schema.")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_diff", "version": "1.0", "result": None, "error": error})
 
     options = data.options or Options()
 
@@ -182,14 +159,8 @@ def schema_diff(payload: dict[str, Any]):
     unsupported_key = unsupported_old or unsupported_new
     if unsupported_key:
         message = "ref is not supported" if unsupported_key == "$ref" else "unsupported schema keyword"
-        error = _structured_error(
-            "SCHEMA_UNSUPPORTED",
-            message,
-            http_status=400,
-            path=unsupported_key,
-            error_class="SCHEMA_UNSUPPORTED",
-        )
-        return _fail(400, error)
+        error = _structured_error("SCHEMA_UNSUPPORTED", message, error_class="SCHEMA_UNSUPPORTED", path=unsupported_key)
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_diff", "version": "1.0", "result": None, "error": error})
 
     old_map: dict[str, dict[str, Any]] = {}
     new_map: dict[str, dict[str, Any]] = {}
@@ -197,9 +168,9 @@ def schema_diff(payload: dict[str, Any]):
     _walk_schema(data.old_schema, "", None, old_map, options.ignore_order)
     _walk_schema(data.new_schema, "", None, new_map, options.ignore_order)
 
-    added_fields: list[dict[str, Any]] = []
-    removed_fields: list[dict[str, Any]] = []
-    changed_fields: list[dict[str, Any]] = []
+    added_fields = []
+    removed_fields = []
+    changed_fields = []
 
     for path in sorted(new_map.keys() - old_map.keys()):
         node = new_map[path]
@@ -212,7 +183,7 @@ def schema_diff(payload: dict[str, Any]):
     for path in sorted(old_map.keys() & new_map.keys()):
         old_node = old_map[path]
         new_node = new_map[path]
-        parts: list[str] = []
+        parts = []
 
         if options.compare_type and old_node.get("type") != new_node.get("type"):
             parts.append(f"type:{old_node.get('type')} -> {new_node.get('type')}")
@@ -231,7 +202,7 @@ def schema_diff(payload: dict[str, Any]):
                 }
             )
 
-    return _ok({"diff": {"added_fields": added_fields, "removed_fields": removed_fields, "changed_fields": changed_fields}})
+    return _response({"diff": {"added_fields": added_fields, "removed_fields": removed_fields, "changed_fields": changed_fields}})
 
 
 # Self-test hints (local):
@@ -248,7 +219,7 @@ def schema_diff(payload: dict[str, Any]):
 #   -d '{"old_schema":{"type":"object","properties":{"tags":{"type":"array","items":{"type":"string"}}}},"new_schema":{"type":"object","properties":{"tags":{"type":"array","items":{"type":"integer"}}}}}'
 
 
-CONTRACT: Dict[str, Any] = {
+CONTRACT = {
     "name": "schema_diff",
     "version": "1.0.0",
     "path": "/tools/schema_diff",
@@ -307,11 +278,7 @@ CONTRACT: Dict[str, Any] = {
                         "severity": {"type": "string"},
                         "where": {
                             "type": "object",
-                            "properties": {
-                                "tool": {"type": "string"},
-                                "stage": {"type": "string"},
-                                "path": {"type": "string"},
-                            },
+                            "properties": {"tool": {"type": "string"}, "stage": {"type": "string"}, "path": {"type": "string"}},
                             "required": ["tool", "stage", "path"],
                             "additionalProperties": False,
                         },
@@ -351,13 +318,7 @@ CONTRACT: Dict[str, Any] = {
                 "ok": True,
                 "tool": "schema_diff",
                 "version": "1.0",
-                "result": {
-                    "diff": {
-                        "added_fields": [{"path": "age", "schema": {"type": "integer", "required": False, "enum": None}}],
-                        "removed_fields": [],
-                        "changed_fields": [],
-                    }
-                },
+                "result": {"diff": {"added_fields": [{"path": "age", "schema": {"type": "integer"}}], "removed_fields": [], "changed_fields": []}},
                 "error": None,
             },
         }

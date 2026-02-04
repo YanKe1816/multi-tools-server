@@ -1,34 +1,33 @@
 from __future__ import annotations
 
-import hashlib
 from copy import deepcopy
-from typing import Any, Dict, List, Optional, Tuple
+import hashlib
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
+from pydantic import BaseModel, Field, StrictStr, ValidationError
 
 router = APIRouter()
 
-TOOL_NAME = "schema_map"
-TOOL_VERSION = "1.0"
-
 
 class Mapping(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     rename: dict[str, str] = Field(default_factory=dict)
     drop: list[str] = Field(default_factory=list)
     defaults: dict[str, Any] = Field(default_factory=dict)
     require: list[str] = Field(default_factory=list)
 
+    class Config:
+        extra = "forbid"
+
 
 class Input(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     data: dict[str, Any]
     mapping: Mapping
     mode: StrictStr = "strict"
+
+    class Config:
+        extra = "forbid"
 
 
 def _fingerprint(tool: str, stage: str, error_class: str, code: str, http_status: int) -> str:
@@ -44,21 +43,10 @@ def _structured_error(code: str, message: str, http_status: int = 400, path: str
         "message": message,
         "retryable": False,
         "severity": "low",
-        "where": {"tool": TOOL_NAME, "stage": "validate", "path": path},
+        "where": {"tool": "schema_map", "stage": "validate", "path": path},
         "http_status": http_status,
-        "fingerprint": _fingerprint(TOOL_NAME, "validate", error_class, code, http_status),
+        "fingerprint": _fingerprint("schema_map", "validate", error_class, code, http_status),
     }
-
-
-def _envelope_ok(result: dict[str, Any]) -> dict[str, Any]:
-    return {"ok": True, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": result, "error": None}
-
-
-def _envelope_fail(http_status: int, error: dict[str, Any]) -> JSONResponse:
-    return JSONResponse(
-        status_code=http_status,
-        content={"ok": False, "tool": TOOL_NAME, "version": TOOL_VERSION, "result": None, "error": error},
-    )
 
 
 def _is_valid_path(path: str) -> bool:
@@ -118,28 +106,31 @@ def _sorted_errors(errors: list[dict[str, str]]) -> list[dict[str, str]]:
     return sorted(errors, key=lambda item: (item["path"], item["code"], item["message"]))
 
 
+def _response(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "tool": "schema_map", "version": "1.0", "result": result, "error": None}
+
+
 @router.post("/tools/schema_map")
 def schema_map(payload: dict[str, Any]):
     try:
         data = Input.model_validate(payload)
     except ValidationError:
-        error = _structured_error("INPUT_INVALID", "Input must match the schema_map schema.", path="")
-        return _envelope_fail(400, error)
+        error = _structured_error("INPUT_INVALID", "Input must match the schema_map schema.")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_map", "version": "1.0", "result": None, "error": error})
 
     if data.mode not in {"strict", "permissive"}:
-        error = _structured_error("MODE_INVALID", "Mode must be strict or permissive.", path="mode")
-        return _envelope_fail(400, error)
+        error = _structured_error("MODE_INVALID", "Mode must be strict or permissive.")
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_map", "version": "1.0", "result": None, "error": error})
 
     invalid_path = _validate_paths(data.mapping)
     if invalid_path:
         error = _structured_error("MAPPING_INVALID", f"Invalid path: {invalid_path}.", path=invalid_path)
-        return _envelope_fail(400, error)
+        return JSONResponse(status_code=400, content={"ok": False, "tool": "schema_map", "version": "1.0", "result": None, "error": error})
 
     output = deepcopy(data.data)
     errors: list[dict[str, str]] = []
     applied: list[str] = []
 
-    # rename (stable order)
     for source, target in sorted(data.mapping.rename.items(), key=lambda item: (item[0], item[1])):
         found, value = _get_path(output, source)
         if not found:
@@ -149,19 +140,16 @@ def schema_map(payload: dict[str, Any]):
             _delete_path(output, source)
             applied.append(f"rename:{source}->{target}")
 
-    # defaults (stable order by target path)
     for target in sorted(data.mapping.defaults.keys()):
         found, _ = _get_path(output, target)
         if not found:
             _set_path(output, target, data.mapping.defaults[target])
             applied.append(f"defaults:{target}")
 
-    # drop (stable order)
     for path in sorted(data.mapping.drop):
         if _delete_path(output, path):
             applied.append(f"drop:{path}")
 
-    # require (stable order)
     for path in sorted(data.mapping.require):
         found, _ = _get_path(output, path)
         if not found:
@@ -169,7 +157,7 @@ def schema_map(payload: dict[str, Any]):
 
     ordered_errors = _sorted_errors(errors)
     strict = data.mode == "strict"
-    result_ok = (not ordered_errors) if strict else True
+    result_ok = not ordered_errors if strict else True
 
     result: dict[str, Any] = {
         "ok": result_ok,
@@ -178,10 +166,10 @@ def schema_map(payload: dict[str, Any]):
         "errors": ordered_errors,
     }
 
-    return _envelope_ok(result)
+    return _response(result)
 
 
-CONTRACT: Dict[str, Any] = {
+CONTRACT = {
     "name": "schema_map",
     "version": "1.0.0",
     "path": "/tools/schema_map",
@@ -239,11 +227,7 @@ CONTRACT: Dict[str, Any] = {
                         "severity": {"type": "string"},
                         "where": {
                             "type": "object",
-                            "properties": {
-                                "tool": {"type": "string"},
-                                "stage": {"type": "string"},
-                                "path": {"type": "string"},
-                            },
+                            "properties": {"tool": {"type": "string"}, "stage": {"type": "string"}, "path": {"type": "string"}},
                             "required": ["tool", "stage", "path"],
                             "additionalProperties": False,
                         },
