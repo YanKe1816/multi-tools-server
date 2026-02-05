@@ -1,3 +1,4 @@
+import json
 import asyncio
 from typing import Any
 
@@ -5,37 +6,62 @@ from main import app
 from tests.asgi_client import request_json
 
 
-def test_connect_returns_fields():
-    status, body = request_json(app, "GET", "/connect")
-    assert status == 200
-    assert body == {
-        "server_name": "multi-tools-server",
-        "server_version": "1.0.0",
-        "sse_url": "/sse",
-        "tools_url": "/mcp",
-    }
-
-
-def test_sse_content_type():
+def test_sse_content_type_and_endpoint_event():
     status, headers, body = asyncio.run(_request_raw(app, "GET", "/sse"))
     assert status == 200
-    content_type = headers.get("content-type", "")
-    assert content_type.startswith("text/event-stream")
+    assert headers.get("content-type", "").startswith("text/event-stream")
     assert body.startswith(b"event: endpoint")
+    assert b"data: /message" in body
 
 
-def test_message_invokes_verify_test():
+def test_message_jsonrpc_initialize():
     status, body = request_json(
         app,
         "POST",
         "/message",
-        {"tool": "verify_test", "input": {"text": "ping"}, "request_id": "req-1"},
+        {"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {}},
     )
     assert status == 200
-    assert body["ok"] is True
-    assert body["request_id"] == "req-1"
-    assert body["tool"] == "verify_test"
-    assert body["output"]["result"]["text"] == "ping"
+    assert body["jsonrpc"] == "2.0"
+    assert body["id"] == "1"
+    assert body["result"]["serverInfo"]["name"] == "multi-tools-server"
+
+
+def test_message_jsonrpc_tools_list():
+    status, body = request_json(
+        app,
+        "POST",
+        "/message",
+        {"jsonrpc": "2.0", "id": "2", "method": "tools/list", "params": {}},
+    )
+    assert status == 200
+    assert body["jsonrpc"] == "2.0"
+    assert body["id"] == "2"
+    tools = body["result"]["tools"]
+    assert any(tool["name"] == "verify_test" for tool in tools)
+    verify_tool = next(tool for tool in tools if tool["name"] == "verify_test")
+    assert set(verify_tool.keys()) == {"name", "description", "inputSchema"}
+
+
+def test_message_jsonrpc_tools_call_verify_test():
+    status, body = request_json(
+        app,
+        "POST",
+        "/message",
+        {
+            "jsonrpc": "2.0",
+            "id": "3",
+            "method": "tools/call",
+            "params": {"name": "verify_test", "arguments": {"text": "ping"}},
+        },
+    )
+    assert status == 200
+    assert body["jsonrpc"] == "2.0"
+    assert body["id"] == "3"
+    content = body["result"]["content"]
+    assert content[0]["type"] == "text"
+    payload = json.loads(content[0]["text"])
+    assert payload["result"]["text"] == "ping"
 
 
 async def _request_raw(app, method: str, path: str, payload: Any | None = None):
