@@ -19,7 +19,7 @@
 - Our total liability is limited to the amount paid for the service, if any.
 
 ## Contact
-- support@example.com
+- sidcraigau@gmail.com
 
 ## Changes
 - This document may change over time.

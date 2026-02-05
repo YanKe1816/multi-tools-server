@@ -23,7 +23,7 @@
 - Operational logs may exist for reliability and debugging and should not include request bodies.
 
 ## Contact
-- support@example.com
+- sidcraigau@gmail.com
 
 ## Changes
 - This document may change over time.
