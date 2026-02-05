@@ -21,7 +21,8 @@ def test_sse_content_type():
     assert status == 200
     content_type = headers.get("content-type", "")
     assert content_type.startswith("text/event-stream")
-    assert body.startswith(b"event: endpoint")
+    assert body.startswith(b":" + (b" " * 2048))
+    assert b"event: endpoint" in body
 
 
 def test_message_invokes_verify_test():

@@ -155,12 +155,13 @@ def _tools_list_payload() -> list[dict[str, Any]]:
     return tools
 
 
-async def _sse_stream(base_url: str):
-    endpoint_url = f"{base_url.rstrip('/')}/message"
+async def _sse_stream(request: Request):
+    endpoint_url = f"{str(request.base_url).rstrip('/')}/message"
+    yield ":" + (" " * 2048) + "\n\n"
     yield f"event: endpoint\ndata: {endpoint_url}\n\n"
     while True:
-        await asyncio.sleep(15)
-        yield "event: ping\ndata: {}\n\n"
+        await asyncio.sleep(5)
+        yield ": ping\n\n"
 
 
 @app.get("/")
@@ -190,9 +191,10 @@ def connect():
 
 
 @app.get("/sse")
+@app.get("/sse/")
 def sse(request: Request):
     return StreamingResponse(
-        _sse_stream(str(request.base_url)),
+        _sse_stream(request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

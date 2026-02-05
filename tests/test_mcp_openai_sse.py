@@ -10,7 +10,8 @@ def test_sse_content_type_and_endpoint_event():
     status, headers, body = asyncio.run(_request_raw(app, "GET", "/sse"))
     assert status == 200
     assert headers.get("content-type", "").startswith("text/event-stream")
-    assert body.startswith(b"event: endpoint")
+    assert body.startswith(b":" + (b" " * 2048))
+    assert b"event: endpoint" in body
     assert b"data: http://testserver/message" in body
 
 
