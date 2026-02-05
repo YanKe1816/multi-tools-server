@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from tools.verify_test import router as verify_router, verify_test as verify_test_tool
 from tools.text_normalize import router as text_normalize_router
@@ -155,8 +155,9 @@ def _tools_list_payload() -> list[dict[str, Any]]:
     return tools
 
 
-async def _sse_stream():
-    yield "event: endpoint\ndata: /message\n\n"
+async def _sse_stream(base_url: str):
+    endpoint_url = f"{base_url.rstrip('/')}/message"
+    yield f"event: endpoint\ndata: {endpoint_url}\n\n"
     while True:
         await asyncio.sleep(15)
         yield "event: ping\ndata: {}\n\n"
@@ -189,8 +190,16 @@ def connect():
 
 
 @app.get("/sse")
-def sse():
-    return StreamingResponse(_sse_stream(), media_type="text/event-stream")
+def sse(request: Request):
+    return StreamingResponse(
+        _sse_stream(str(request.base_url)),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/message")

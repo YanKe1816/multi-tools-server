@@ -11,7 +11,7 @@ def test_sse_content_type_and_endpoint_event():
     assert status == 200
     assert headers.get("content-type", "").startswith("text/event-stream")
     assert body.startswith(b"event: endpoint")
-    assert b"data: /message" in body
+    assert b"data: http://testserver/message" in body
 
 
 def test_message_jsonrpc_initialize():
