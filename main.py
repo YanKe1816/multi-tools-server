@@ -221,6 +221,12 @@ def sse(request: Request):
     )
 
 
+@app.post("/sse")
+@app.post("/sse/")
+def sse_message_bridge(payload: dict[str, Any]):
+    return message(payload)
+
+
 @app.post("/message")
 def message(payload: dict[str, Any]):
     _broadcast_to_sse_clients({"payload": payload})
