@@ -29,6 +29,7 @@ from tools._shared.errors import make_error
 app = FastAPI(title="Multi-Tools Server")
 SERVER_NAME = "multi-tools-server"
 SERVER_VERSION = "1.0.0"
+SSE_CLIENTS: set[asyncio.Queue[dict[str, Any]]] = set()
 
 TOOL_ORDER = [
     "verify_test",
@@ -155,13 +156,29 @@ def _tools_list_payload() -> list[dict[str, Any]]:
     return tools
 
 
+def _broadcast_to_sse_clients(payload: dict[str, Any]) -> None:
+    for client in list(SSE_CLIENTS):
+        try:
+            client.put_nowait(payload)
+        except asyncio.QueueFull:
+            continue
+
+
 async def _sse_stream(request: Request):
+    client_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=100)
+    SSE_CLIENTS.add(client_queue)
     endpoint_url = f"{str(request.base_url).rstrip('/')}/message"
     yield ":" + (" " * 2048) + "\n\n"
     yield f"event: endpoint\ndata: {endpoint_url}\n\n"
-    while True:
-        await asyncio.sleep(5)
-        yield ": ping\n\n"
+    try:
+        while True:
+            try:
+                payload = await asyncio.wait_for(client_queue.get(), timeout=10)
+                yield f"event: message\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+    finally:
+        SSE_CLIENTS.discard(client_queue)
 
 
 @app.get("/")
@@ -206,6 +223,8 @@ def sse(request: Request):
 
 @app.post("/message")
 def message(payload: dict[str, Any]):
+    _broadcast_to_sse_clients({"payload": payload})
+
     if payload.get("jsonrpc") == "2.0":
         request_id = payload.get("id")
         method = payload.get("method")
