@@ -29,6 +29,7 @@ from tools._shared.errors import make_error
 app = FastAPI(title="Multi-Tools Server")
 SERVER_NAME = "multi-tools-server"
 SERVER_VERSION = "1.0.0"
+DEFAULT_MCP_PROTOCOL_VERSION = "2025-03-26"
 SSE_CLIENTS: set[asyncio.Queue[dict[str, Any]]] = set()
 
 TOOL_ORDER = [
@@ -237,10 +238,14 @@ def message(payload: dict[str, Any]):
         params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
 
         if method == "initialize":
+            protocol_version = params.get("protocolVersion")
+            if not isinstance(protocol_version, str) or not protocol_version:
+                protocol_version = DEFAULT_MCP_PROTOCOL_VERSION
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
+                    "protocolVersion": protocol_version,
                     "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
                     "capabilities": {"tools": {"listChanged": False}},
                 },

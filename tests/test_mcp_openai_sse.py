@@ -15,7 +15,30 @@ def test_sse_content_type_and_endpoint_event():
     assert b"data: http://testserver/message" in body
 
 
-def test_message_jsonrpc_initialize():
+def test_message_jsonrpc_initialize_echoes_protocol_version():
+    status, body = request_json(
+        app,
+        "POST",
+        "/message",
+        {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "x", "version": "0"},
+            },
+        },
+    )
+    assert status == 200
+    assert body["jsonrpc"] == "2.0"
+    assert body["id"] == "1"
+    assert body["result"]["protocolVersion"] == "2025-03-26"
+    assert body["result"]["serverInfo"]["name"] == "multi-tools-server"
+
+
+def test_message_jsonrpc_initialize_uses_default_protocol_version_when_missing():
     status, body = request_json(
         app,
         "POST",
@@ -25,8 +48,28 @@ def test_message_jsonrpc_initialize():
     assert status == 200
     assert body["jsonrpc"] == "2.0"
     assert body["id"] == "1"
+    assert body["result"]["protocolVersion"] == "2025-03-26"
     assert body["result"]["serverInfo"]["name"] == "multi-tools-server"
 
+
+def test_sse_post_bridge_initialize_includes_protocol_version():
+    status, body = request_json(
+        app,
+        "POST",
+        "/sse/",
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "x", "version": "0"},
+            },
+        },
+    )
+    assert status == 200
+    assert body["result"]["protocolVersion"] == "2025-03-26"
 
 def test_message_jsonrpc_tools_list():
     status, body = request_json(
