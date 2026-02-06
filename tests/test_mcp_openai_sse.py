@@ -52,6 +52,27 @@ def test_message_jsonrpc_initialize_uses_default_protocol_version_when_missing()
     assert body["result"]["serverInfo"]["name"] == "multi-tools-server"
 
 
+def test_message_jsonrpc_notification_initialized_without_id_returns_result_null():
+    status, body = request_json(
+        app,
+        "POST",
+        "/message",
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+    )
+    assert status == 200
+    assert body == {"jsonrpc": "2.0", "result": None}
+
+
+def test_message_jsonrpc_notification_initialized_with_id_returns_result_null():
+    status, body = request_json(
+        app,
+        "POST",
+        "/message",
+        {"jsonrpc": "2.0", "id": "n1", "method": "notifications/initialized", "params": {}},
+    )
+    assert status == 200
+    assert body == {"jsonrpc": "2.0", "id": "n1", "result": None}
+
 def test_sse_post_bridge_initialize_includes_protocol_version():
     status, body = request_json(
         app,

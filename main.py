@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import time
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -25,6 +27,9 @@ from tools.schema_diff import schema_diff as schema_diff_tool
 from tools.enum_registry import enum_registry as enum_registry_tool
 from tools._shared.contracts import CONTRACTS, contract_summaries
 from tools._shared.errors import make_error
+
+
+logger = logging.getLogger("mcp")
 
 app = FastAPI(title="Multi-Tools Server")
 SERVER_NAME = "multi-tools-server"
@@ -157,6 +162,35 @@ def _tools_list_payload() -> list[dict[str, Any]]:
     return tools
 
 
+TOOLS_LIST_CACHE = _tools_list_payload()
+
+
+def _params_keys(params: dict[str, Any]) -> list[str]:
+    return sorted(str(key) for key in params.keys())
+
+
+def _log_jsonrpc_request(method: Any, request_id: Any, params: dict[str, Any]) -> float:
+    start_ms = time.perf_counter() * 1000
+    logger.info(
+        "mcp request method=%s id=%s params_keys=%s",
+        method,
+        request_id,
+        _params_keys(params),
+    )
+    return start_ms
+
+
+def _log_jsonrpc_response(method: Any, request_id: Any, start_ms: float, response_kind: str) -> None:
+    elapsed_ms = (time.perf_counter() * 1000) - start_ms
+    logger.info(
+        "mcp response method=%s id=%s type=%s ms=%.2f",
+        method,
+        request_id,
+        response_kind,
+        elapsed_ms,
+    )
+
+
 def _broadcast_to_sse_clients(payload: dict[str, Any]) -> None:
     for client in list(SSE_CLIENTS):
         try:
@@ -236,12 +270,13 @@ def message(payload: dict[str, Any]):
         request_id = payload.get("id")
         method = payload.get("method")
         params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        start_ms = _log_jsonrpc_request(method, request_id, params)
 
         if method == "initialize":
             protocol_version = params.get("protocolVersion")
             if not isinstance(protocol_version, str) or not protocol_version:
                 protocol_version = DEFAULT_MCP_PROTOCOL_VERSION
-            return {
+            response = {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
@@ -250,27 +285,46 @@ def message(payload: dict[str, Any]):
                     "capabilities": {"tools": {"listChanged": False}},
                 },
             }
+            _log_jsonrpc_response(method, request_id, start_ms, "result")
+            return response
+
+        if method == "notifications/initialized":
+            response: dict[str, Any] = {"jsonrpc": "2.0", "result": None}
+            if request_id is not None:
+                response["id"] = request_id
+            _log_jsonrpc_response(method, request_id, start_ms, "result")
+            return response
 
         if method == "tools/list":
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": _tools_list_payload()}}
+            response = {"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS_LIST_CACHE}}
+            _log_jsonrpc_response(method, request_id, start_ms, "result")
+            return response
 
         if method == "tools/call":
             tool_name = params.get("name")
             tool_input = params.get("arguments")
             if not isinstance(tool_name, str) or not isinstance(tool_input, dict):
-                return _message_error(request_id, "INVALID_PARAMS", "tools/call requires name and arguments object.")
+                response = _message_error(request_id, "INVALID_PARAMS", "tools/call requires name and arguments object.")
+                _log_jsonrpc_response(method, request_id, start_ms, "error")
+                return response
 
             ok, output, error = _invoke_tool(tool_name, tool_input)
             if not ok and error:
-                return _message_error(request_id, error["code"], error["message"], error["details"])
+                response = _message_error(request_id, error["code"], error["message"], error["details"])
+                _log_jsonrpc_response(method, request_id, start_ms, "error")
+                return response
 
-            return {
+            response = {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {"content": [{"type": "text", "text": json.dumps(output, ensure_ascii=False)}], "isError": False},
             }
+            _log_jsonrpc_response(method, request_id, start_ms, "result")
+            return response
 
-        return _message_error(request_id, "METHOD_NOT_FOUND", "Method not found.")
+        response = _message_error(request_id, "METHOD_NOT_FOUND", "Method not found.")
+        _log_jsonrpc_response(method, request_id, start_ms, "error")
+        return response
 
     tool = payload.get("tool")
     tool_input = payload.get("input")
