@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any
 
@@ -147,7 +148,12 @@ def _invoke_tool(tool_name: str, tool_input: dict[str, Any]) -> tuple[bool, Any,
     return True, result, None
 
 
-def _tools_list_payload() -> list[dict[str, Any]]:
+def _configured_allowlist() -> list[str]:
+    raw = os.getenv("MCP_TOOL_ALLOWLIST", "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _full_tools_list_payload() -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     for tool in _tools_manifest():
         contract = CONTRACTS[tool["name"]]
@@ -159,10 +165,24 @@ def _tools_list_payload() -> list[dict[str, Any]]:
                 "inputSchema": input_schema,
             }
         )
+
+    logger.info(
+        "mcp full_tools_cache_built exposed_tools=%s",
+        [tool["name"] for tool in tools],
+    )
+
     return tools
 
 
-TOOLS_LIST_CACHE = _tools_list_payload()
+def _filtered_tools_list_payload(allowlist: list[str]) -> list[dict[str, Any]]:
+    if not allowlist:
+        return FULL_TOOLS_LIST_CACHE
+
+    tools_by_name = {tool["name"]: tool for tool in FULL_TOOLS_LIST_CACHE}
+    return [tools_by_name[name] for name in allowlist if name in tools_by_name]
+
+
+FULL_TOOLS_LIST_CACHE = _full_tools_list_payload()
 
 
 def _params_keys(params: dict[str, Any]) -> list[str]:
@@ -296,7 +316,16 @@ def message(payload: dict[str, Any]):
             return response
 
         if method == "tools/list":
-            response = {"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS_LIST_CACHE}}
+            allowlist = _configured_allowlist()
+            tools_list = _filtered_tools_list_payload(allowlist)
+            logger.info(
+                "mcp tools_list_request allowlist_enabled=%s allowlist=%s exposed_tools_count=%s exposed_tools_sample=%s",
+                bool(allowlist),
+                allowlist,
+                len(tools_list),
+                [tool["name"] for tool in tools_list[:5]],
+            )
+            response = {"jsonrpc": "2.0", "id": request_id, "result": {"tools": tools_list}}
             _log_jsonrpc_response(method, request_id, start_ms, "result")
             return response
 
